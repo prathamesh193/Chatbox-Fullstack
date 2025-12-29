@@ -1,0 +1,14 @@
+{
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "typescript.tsdk": "node_modules\\typescript\\lib",
+    "boost-test-adapter-robaho.tests": [
+        {
+            "testExecutables": [
+                {
+                    "glob": "**/*{_test,_test.exe}"
+                }
+            ],
+            "debugConfig": "Test Config"
+        }
+    ]
+}
