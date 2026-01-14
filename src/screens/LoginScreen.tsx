@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { api } from "../utils/api";
 import { COLORS } from "../constants/colors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
+import SystemNavigationBar from "react-native-system-navigation-bar";
 
 type LoginScreenProp = NativeStackNavigationProp<RootStackParamList, "Login">;
 
@@ -27,6 +28,13 @@ const LoginScreen = () => {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+  if (Platform.OS === 'android') {
+    SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
+    SystemNavigationBar.setNavigationBarContrastEnforced(true);
+  }
+  }, []);
+  
   const handleLogin = async () => {
     if (!email || !password) {
       Alert.alert("Missing Fields", "Please enter both email and password.");

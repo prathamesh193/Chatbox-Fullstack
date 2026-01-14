@@ -22,6 +22,7 @@ import { useNavigation } from "@react-navigation/native";
 import { COLORS } from "../constants/colors";
 import { api } from "../utils/api";
 import { formatMessageTime } from "../utils/time";
+import SystemNavigationBar from "react-native-system-navigation-bar";
 
 const brahmanLogo = require('../assets/brahman-logo.jpeg');
 const TAB_CONTACTS = "contacts";
@@ -45,6 +46,13 @@ const HomeScreen = () => {
 
   const [actionModalVisible, setActionModalVisible] = useState(false);
   const [actionTarget, setActionTarget] = useState<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
+      SystemNavigationBar.setNavigationBarContrastEnforced(true);
+    }
+  }, []);
 
   // ------------------------------------------------------
   // CLEAN SEARCH RANKING

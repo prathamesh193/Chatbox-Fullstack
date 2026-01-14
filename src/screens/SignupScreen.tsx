@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { api } from "../utils/api";
 import { COLORS } from "../constants/colors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
+import SystemNavigationBar from "react-native-system-navigation-bar";
 
 type SignupScreenProp = NativeStackNavigationProp<RootStackParamList, "Signup">;
 
@@ -26,6 +27,13 @@ const SignupScreen = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
+      SystemNavigationBar.setNavigationBarContrastEnforced(true);
+    }
+  }, []);
 
   const handleSignup = async () => {
     if (!fullName || !email || !password) {

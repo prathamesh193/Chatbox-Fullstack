@@ -18,8 +18,10 @@ import {
   LayoutAnimation,
   UIManager,
   Keyboard,
+  KeyboardAvoidingView,  // <-- ADD THIS
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import SystemNavigationBar from 'react-native-system-navigation-bar';
 import { useRoute, useNavigation } from "@react-navigation/native";
 import { launchImageLibrary } from "react-native-image-picker";
 import { pick, types } from "@react-native-documents/picker";
@@ -79,7 +81,6 @@ const ChatScreen: React.FC = () => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-
   const { socket, userId, emitTyping } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
@@ -123,6 +124,17 @@ const ChatScreen: React.FC = () => {
   const PIN_STORAGE_KEY = (chatId: string) => `pinned:${chatId}`;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+
+
+  // Auto-scroll when keyboard opens
+  // useEffect(() => {
+  //   if (keyboardHeight > 0) {
+  //     setTimeout(() => {
+  //       flatListRef.current?.scrollToEnd({ animated: true });
+  //     }, 100);
+  //   }
+  // }, [keyboardHeight]);
 
   useEffect(() => {
     // Listen for focus event to refresh data when screen comes into focus
@@ -282,6 +294,7 @@ const ChatScreen: React.FC = () => {
     } catch (error: any) {
       console.error("Unblock error:", error);
       if (error.response?.status === 404) Alert.alert("Error", "User not found");
+      else if (error.response?.status === 404) Alert.alert("Error", "User not found");
       else Alert.alert("Error", "Failed to unblock user");
     } finally {
       setBlockLoading(false);
@@ -332,7 +345,9 @@ const ChatScreen: React.FC = () => {
         return [...prev, msg];
       });
 
+      // Multiple scroll attempts for reliability
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300);
     };
 
     socket.on("newMessage", onNew);
@@ -486,9 +501,20 @@ const ChatScreen: React.FC = () => {
     const keyboardWillShow = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
-        const keyboardHeight = e.endCoordinates.height;
-        setKeyboardHeight(keyboardHeight);
+        const height = e.endCoordinates.height;
+        setKeyboardHeight(height);
         setIsKeyboardVisible(true);
+
+        // Multiple scroll attempts to ensure message visibility
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 50);
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 150);
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 300);
       }
     );
 
@@ -497,6 +523,11 @@ const ChatScreen: React.FC = () => {
       () => {
         setKeyboardHeight(0);
         setIsKeyboardVisible(false);
+
+        // Scroll back to bottom when keyboard closes
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       }
     );
 
@@ -505,6 +536,41 @@ const ChatScreen: React.FC = () => {
       keyboardWillHide.remove();
     };
   }, []);
+
+  // useEffect(() => {
+  //   const keyboardWillShow = Keyboard.addListener(
+  //     Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+  //     (e) => {
+  //       const keyboardHeight = e.endCoordinates.height;
+  //       setKeyboardHeight(keyboardHeight);
+  //       setIsKeyboardVisible(true);
+  //     }
+  //   );
+
+  //   const keyboardWillHide = Keyboard.addListener(
+  //     Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+  //     () => {
+  //       setKeyboardHeight(0);
+  //       setIsKeyboardVisible(false);
+  //     }
+  //   );
+
+  //   return () => {
+  //     keyboardWillShow.remove();
+  //     keyboardWillHide.remove();
+  //   };
+  // }, []);
+
+  // Auto-scroll to bottom when keyboard closes
+  // useEffect(() => {
+  //   if (!isKeyboardVisible && messages.length > 0) {
+  //     // Small delay to ensure layout has updated
+  //     setTimeout(() => {
+  //       flatListRef.current?.scrollToEnd({ animated: true });
+  //     }, 100);
+  //   }
+  // }, [isKeyboardVisible, messages.length]);
+
   // -------------------------
   // REMOVED: Auto status updater (was causing premature read status)
   // -------------------------
@@ -513,7 +579,9 @@ const ChatScreen: React.FC = () => {
   // Helper functions
   // -------------------------
   const scrollToBottom = () => {
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 80);
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 150);
   };
 
   const pushMessage = (newMsg: MessageType) => {
@@ -523,6 +591,11 @@ const ChatScreen: React.FC = () => {
       if (exists) return prev;
       return [...prev, newMsg];
     });
+
+    // Auto-scroll after adding message
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 200);
 
     (async () => {
       try {
@@ -654,7 +727,7 @@ const ChatScreen: React.FC = () => {
 
   const getDocumentIcon = (type: string): string => {
     if (type.includes("pdf")) return "📄";
-    if (type.includes("word") || type.includes("document")) return "📝";
+    if (type.includes("word") || type.includes("document")) return "📄";
     if (type.includes("sheet") || type.includes("excel")) return "📊";
     if (type.includes("presentation") || type.includes("powerpoint")) return "📽️";
     if (type.includes("text")) return "📃";
@@ -1049,7 +1122,12 @@ const ChatScreen: React.FC = () => {
       setViewingSentImage(false);
 
       if (emitTyping) emitTyping(chatPartnerId, false);
-      scrollToBottom();
+
+      // Multiple scroll attempts to ensure latest message is visible
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 400);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 600);
     } catch (err: any) {
       console.warn("send failed", err);
       if (err.response?.status === 404)
@@ -1229,7 +1307,7 @@ const ChatScreen: React.FC = () => {
                 resizeMode="cover"
               />
               <View style={styles.videoThumbOverlay}>
-                <Text style={styles.videoThumbIcon}>▶️</Text>
+                <Text style={styles.videoThumbIcon}>▶️ </Text>
               </View>
             </View>
           ) : (
@@ -1417,7 +1495,7 @@ const ChatScreen: React.FC = () => {
                   </Text>
                 </View>
 
-                <Text style={{ fontSize: 22, marginLeft: 10 }}>⬇️</Text>
+                <Text style={{ fontSize: 22, marginLeft: 10 }}>⬇️ </Text>
               </TouchableOpacity>
             )}
 
@@ -1496,161 +1574,327 @@ const ChatScreen: React.FC = () => {
   return (
     <View style={{ flex: 1 }}>
       <StatusBar backgroundColor={COLORS.primary} barStyle="light-content" />
-      <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.primary }} edges={['top']}>
-        <View style={[styles.container, { paddingBottom: 0 }]}>
+      <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }} edges={['top']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={0}
+        >
+          <View style={styles.container}>
 
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-              <Text style={styles.backButtonText}>←</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={{ flex: 1, marginHorizontal: 8 }}
-              onPress={() => {
-                console.log("Profile navigation disabled");
-              }}
-            >
-              <Text style={styles.headerName}>{name}</Text>
-              <Text style={styles.chatStatusSmall}>
-                {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.searchIconBtn}>
-              <Text style={styles.searchIcon}>⋮</Text>
-            </TouchableOpacity>
-          </View>
-
-          {pinnedMessage && (
-            <TouchableOpacity
-              style={{
-                backgroundColor: "#f3f9f3",
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-                marginHorizontal: 12,
-                marginTop: 12,
-                borderRadius: 12,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "space-between",
-                borderWidth: 1,
-                borderColor: "#d1f0d1",
-              }}
-              onPress={() => scrollToPinned()}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
-                <Text style={{ marginRight: 10 }}>📌</Text>
-                <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={{ fontWeight: "700", color: "#064e12" }}>
-                    {String(pinnedMessage.senderId) === String(userId) ? "You: " : ""}
-                    {(pinnedMessage.text || "").length > 60 ? (pinnedMessage.text || "").slice(0, 60) + "..." : pinnedMessage.text}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: "#3b7a3b" }}>{pinnedMessage.createdAt ? new Date(pinnedMessage.createdAt).toLocaleString() : ""}</Text>
-                </View>
-              </View>
-
-              <TouchableOpacity onPress={() => unpinMessage()} style={{ marginLeft: 12 }}>
-                <Text style={{ color: "#064e12", fontWeight: "700" }}>Unpin</Text>
+            {/* Header */}
+            <View style={styles.header}>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <Text style={styles.backButtonText}>←</Text>
               </TouchableOpacity>
-            </TouchableOpacity>
-          )}
 
-          <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
-            <TouchableOpacity style={menuStyles.overlay} activeOpacity={1} onPress={() => setMenuVisible(false)}>
-              <View style={menuStyles.menu}>
-                <TouchableOpacity style={menuStyles.menuItem} onPress={() => { setMenuVisible(false); setSearchModalVisible(true); }}>
-                  <Text style={menuStyles.menuText}>Search chat</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={menuStyles.menuItem} onPress={handleClearChat}>
-                  <Text style={menuStyles.menuText}>Clear chat</Text>
-                </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, marginHorizontal: 8 }}
+                onPress={() => {
+                  console.log("Profile navigation disabled");
+                }}
+              >
+                <Text style={styles.headerName}>{name}</Text>
+                <Text style={styles.chatStatusSmall}>
+                  {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
+                </Text>
+              </TouchableOpacity>
 
-                {/* CHANGED: Show Unblock if blocked, Block if not blocked */}
-                {isBlocked ? (
+              <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.searchIconBtn}>
+                <Text style={styles.searchIcon}>⋮</Text>
+              </TouchableOpacity>
+            </View>
+
+            {pinnedMessage && (
+              <TouchableOpacity
+                style={{
+                  backgroundColor: "#f3f9f3",
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  marginHorizontal: 12,
+                  marginTop: 12,
+                  borderRadius: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderWidth: 1,
+                  borderColor: "#d1f0d1",
+                }}
+                onPress={() => scrollToPinned()}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
+                  <Text style={{ marginRight: 10 }}>📌</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={{ fontWeight: "700", color: "#064e12" }}>
+                      {String(pinnedMessage.senderId) === String(userId) ? "You: " : ""}
+                      {(pinnedMessage.text || "").length > 60 ? (pinnedMessage.text || "").slice(0, 60) + "..." : pinnedMessage.text}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: "#3b7a3b" }}>{pinnedMessage.createdAt ? new Date(pinnedMessage.createdAt).toLocaleString() : ""}</Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity onPress={() => unpinMessage()} style={{ marginLeft: 12 }}>
+                  <Text style={{ color: "#064e12", fontWeight: "700" }}>Unpin</Text>
+                </TouchableOpacity>
+              </TouchableOpacity>
+            )}
+
+            <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
+              <TouchableOpacity style={menuStyles.overlay} activeOpacity={1} onPress={() => setMenuVisible(false)}>
+                <View style={menuStyles.menu}>
+                  <TouchableOpacity style={menuStyles.menuItem} onPress={() => { setMenuVisible(false); setSearchModalVisible(true); }}>
+                    <Text style={menuStyles.menuText}>Search chat</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={menuStyles.menuItem} onPress={handleClearChat}>
+                    <Text style={menuStyles.menuText}>Clear chat</Text>
+                  </TouchableOpacity>
+
+                  {/* CHANGED: Show Unblock if blocked, Block if not blocked */}
+                  {isBlocked ? (
+                    <TouchableOpacity
+                      style={menuStyles.menuItem}
+                      onPress={() => {
+                        setMenuVisible(false);
+                        Alert.alert(
+                          "Unblock User",
+                          `Are you sure you want to unblock ${name}?`,
+                          [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Unblock",
+                              style: "default",
+                              onPress: handleUnblockUser
+                            }
+                          ]
+                        );
+                      }}
+                    >
+                      <Text style={menuStyles.menuText}>Unblock {name}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={menuStyles.menuItem} onPress={() => { setMenuVisible(false); setShowBlockModal(true); }}>
+                      <Text style={menuStyles.menuText}>Block {name}</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity style={menuStyles.menuItem} onPress={handleReportUser}>
+                    <Text style={menuStyles.menuText}>Report {name}</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </Modal>
+
+            <Modal visible={searchModalVisible} animationType="slide" transparent>
+              <SafeAreaView style={searchModalStyles.modal}>
+                <View style={searchModalStyles.header}>
+                  <TouchableOpacity onPress={() => setSearchModalVisible(false)} style={searchModalStyles.closeBtn}>
+                    <Text style={searchModalStyles.closeText}>Back</Text>
+                  </TouchableOpacity>
+
+                  <TextInput
+                    placeholder="Search messages..."
+                    placeholderTextColor="#9ca3af"
+                    value={searchQuery}
+                    onChangeText={(t) => setSearchQuery(t)}
+                    style={searchModalStyles.input}
+                    autoFocus
+                  />
+
+                  {searchQuery.length > 0 ? (
+                    <TouchableOpacity onPress={() => setSearchQuery("")} style={searchModalStyles.clearBtn}>
+                      <Text style={searchModalStyles.clearText}>✖</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+
+                <View style={searchModalStyles.resultInfo}>
+                  <Text style={searchModalStyles.resultText}>{searching ? "Searching..." : `${matchIndexes.length} match${matchIndexes.length === 1 ? "" : "es"}`}</Text>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 12 }}>
+                    <TouchableOpacity onPress={goPrevMatch} disabled={matchIndexes.length === 0} style={{ padding: 8, marginRight: 6 }}>
+                      <Text style={{ color: matchIndexes.length === 0 ? "#ccc" : COLORS.primary }}>↑</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={goNextMatch} disabled={matchIndexes.length === 0} style={{ padding: 8 }}>
+                      <Text style={{ color: matchIndexes.length === 0 ? "#ccc" : COLORS.primary }}>↓</Text>
+                    </TouchableOpacity>
+                    <Text style={{ marginLeft: 8, color: "#374151", fontWeight: "600" }}>{matchIndexes.length > 0 ? `${currentMatchIdx + 1} / ${matchIndexes.length}` : ""}</Text>
+                  </View>
+                </View>
+
+                <FlatList
+                  ref={flatListRef}
+                  data={showing}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={renderMessage}
+                  keyExtractor={getMessageKey}
+                  contentContainerStyle={[
+                    styles.messagesContainer,
+                    {
+                      paddingBottom: insets.bottom + 90, // Use insets.bottom for proper spacing
+                      flexGrow: 1,
+                    },
+                  ]}
+
+                  onContentSizeChange={() => {
+                    setTimeout(() => {
+                      flatListRef.current?.scrollToEnd({ animated: true });
+                    }, 100);
+                  }}
+                  onLayout={() => {
+                    setTimeout(() => {
+                      flatListRef.current?.scrollToEnd({ animated: false });
+                    }, 50);
+                  }}
+                  showsVerticalScrollIndicator={false}
+                  ListEmptyComponent={
+                    <View style={styles.emptyContainer}>
+                      <Text style={styles.emptyText}>{searchQuery ? "No matches found" : "No messages yet"}</Text>
+                      <Text style={styles.emptySubtext}>{searchQuery ? "Try another keyword." : "Start a conversation by sending a message!"}</Text>
+                    </View>
+                  }
+                />
+              </SafeAreaView>
+            </Modal>
+
+            <Modal
+              visible={longPressMenuVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setLongPressMenuVisible(false)}
+            >
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.25)" }}
+                activeOpacity={1}
+                onPress={() => setLongPressMenuVisible(false)}
+              >
+                <View
+                  style={{
+                    position: "absolute",
+                    bottom: Platform.OS === "ios" ? 140 : 120,
+                    left: 40,
+                    right: 40,
+                    backgroundColor: "#fff",
+                    borderRadius: 12,
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    elevation: 10,
+                  }}
+                >
+                  {/* PIN / UNPIN */}
                   <TouchableOpacity
-                    style={menuStyles.menuItem}
+                    style={{ paddingVertical: 12 }}
                     onPress={() => {
-                      setMenuVisible(false);
-                      Alert.alert(
-                        "Unblock User",
-                        `Are you sure you want to unblock ${name}?`,
-                        [
-                          { text: "Cancel", style: "cancel" },
-                          {
-                            text: "Unblock",
-                            style: "default",
-                            onPress: handleUnblockUser
-                          }
-                        ]
-                      );
+                      if (!longPressTarget) return;
+                      const alreadyPinned =
+                        pinnedMessage &&
+                        longPressTarget._id &&
+                        String(longPressTarget._id) === String(pinnedMessage._id);
+
+                      if (alreadyPinned) unpinMessage();
+                      else pinMessage(longPressTarget);
                     }}
                   >
-                    <Text style={menuStyles.menuText}>Unblock {name}</Text>
+                    <Text style={{ fontSize: 16, fontWeight: "600" }}>
+                      {pinnedMessage &&
+                        longPressTarget &&
+                        longPressTarget._id &&
+                        String(longPressTarget._id) === String(pinnedMessage._id)
+                        ? "Unpin"
+                        : "Pin"}
+                    </Text>
                   </TouchableOpacity>
-                ) : (
-                  <TouchableOpacity style={menuStyles.menuItem} onPress={() => { setMenuVisible(false); setShowBlockModal(true); }}>
-                    <Text style={menuStyles.menuText}>Block {name}</Text>
+
+                  <View style={{ height: 1, backgroundColor: "#eee" }} />
+
+                  {/* COPY */}
+                  <TouchableOpacity
+                    style={{ paddingVertical: 12 }}
+                    onPress={() => {
+                      if (!longPressTarget) return;
+                      copyMessageText(longPressTarget);
+                    }}
+                  >
+                    <Text style={{ fontSize: 16, fontWeight: "600" }}>Copy</Text>
                   </TouchableOpacity>
-                )}
 
-                <TouchableOpacity style={menuStyles.menuItem} onPress={handleReportUser}>
-                  <Text style={menuStyles.menuText}>Report {name}</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          </Modal>
+                  {/* DELETE – ONLY FOR MY MESSAGES */}
+                  {longPressTarget &&
+                    String(longPressTarget.senderId) === String(userId) && (
+                      <>
+                        <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-          <Modal visible={searchModalVisible} animationType="slide" transparent>
-            <SafeAreaView style={searchModalStyles.modal}>
-              <View style={searchModalStyles.header}>
-                <TouchableOpacity onPress={() => setSearchModalVisible(false)} style={searchModalStyles.closeBtn}>
-                  <Text style={searchModalStyles.closeText}>Back</Text>
-                </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{ paddingVertical: 12 }}
+                          onPress={() => {
+                            if (!longPressTarget) return;
+                            deleteMessage(longPressTarget);
+                          }}
+                        >
+                          <Text
+                            style={{
+                              fontSize: 16,
+                              fontWeight: "600",
+                              color: "#ef4444",
+                            }}
+                          >
+                            Delete
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+                    )}
+                </View>
+              </TouchableOpacity>
+            </Modal>
 
-                <TextInput
-                  placeholder="Search messages..."
-                  placeholderTextColor="#9ca3af"
-                  value={searchQuery}
-                  onChangeText={(t) => setSearchQuery(t)}
-                  style={searchModalStyles.input}
-                  autoFocus
-                />
+            {(isBlocked || isBlockedByThem) && (
+              <View style={styles.blockedOverlay}>
+                <View style={styles.blockedCard}>
+                  <Text style={styles.blockedCardText}>
+                    {isBlocked ? "You blocked this contact" : "You cannot message this user"}
+                  </Text>
 
-                {searchQuery.length > 0 ? (
-                  <TouchableOpacity onPress={() => setSearchQuery("")} style={searchModalStyles.clearBtn}>
-                    <Text style={searchModalStyles.clearText}>✕</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-
-              <View style={searchModalStyles.resultInfo}>
-                <Text style={searchModalStyles.resultText}>{searching ? "Searching..." : `${matchIndexes.length} match${matchIndexes.length === 1 ? "" : "es"}`}</Text>
-                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "flex-end", paddingHorizontal: 12 }}>
-                  <TouchableOpacity onPress={goPrevMatch} disabled={matchIndexes.length === 0} style={{ padding: 8, marginRight: 6 }}>
-                    <Text style={{ color: matchIndexes.length === 0 ? "#ccc" : COLORS.primary }}>↑</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={goNextMatch} disabled={matchIndexes.length === 0} style={{ padding: 8 }}>
-                    <Text style={{ color: matchIndexes.length === 0 ? "#ccc" : COLORS.primary }}>↓</Text>
-                  </TouchableOpacity>
-                  <Text style={{ marginLeft: 8, color: "#374151", fontWeight: "600" }}>{matchIndexes.length > 0 ? `${currentMatchIdx + 1} / ${matchIndexes.length}` : ""}</Text>
+                  {isBlocked && (
+                    <TouchableOpacity
+                      style={styles.tapToUnblockButton}
+                      onPress={handleUnblockUser}
+                      disabled={blockLoading}
+                    >
+                      {blockLoading ? (
+                        <ActivityIndicator size="small" color={COLORS.primary} />
+                      ) : (
+                        <Text style={styles.tapToUnblockText}>Tap to unblock</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
+            )}
 
+            {!searchModalVisible && (
               <FlatList
                 ref={flatListRef}
-                keyboardShouldPersistTaps="handled"
                 data={showing}
-                extraData={showing}
+                keyboardShouldPersistTaps="handled"
                 renderItem={renderMessage}
                 keyExtractor={getMessageKey}
                 contentContainerStyle={[
                   styles.messagesContainer,
                   {
                     paddingBottom: isKeyboardVisible
-                      ? keyboardHeight + 100
-                      : insets.bottom + 100
-                  }
+                      ? (keyboardHeight + 100)
+                      : (insets.bottom + 90),
+                    flexGrow: 1,
+                  },
                 ]}
+                onContentSizeChange={() => {
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToEnd({ animated: true });
+                  }, 100);
+                }}
+                onLayout={() => {
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToEnd({ animated: false });
+                  }, 50);
+                }}
                 showsVerticalScrollIndicator={false}
                 ListEmptyComponent={
                   <View style={styles.emptyContainer}>
@@ -1658,327 +1902,204 @@ const ChatScreen: React.FC = () => {
                     <Text style={styles.emptySubtext}>{searchQuery ? "Try another keyword." : "Start a conversation by sending a message!"}</Text>
                   </View>
                 }
-              />
-            </SafeAreaView>
-          </Modal>
-
-          <Modal
-            visible={longPressMenuVisible}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setLongPressMenuVisible(false)}
-          >
-            <TouchableOpacity
-              style={{ flex: 1, backgroundColor: "rgba(0,0,0,0.25)" }}
-              activeOpacity={1}
-              onPress={() => setLongPressMenuVisible(false)}
-            >
-              <View
-                style={{
-                  position: "absolute",
-                  bottom: Platform.OS === "ios" ? 140 : 120,
-                  left: 40,
-                  right: 40,
-                  backgroundColor: "#fff",
-                  borderRadius: 12,
-                  paddingVertical: 8,
-                  paddingHorizontal: 12,
-                  elevation: 10,
+                onScrollToIndexFailed={(info) => {
+                  setTimeout(() => {
+                    flatListRef.current?.scrollToIndex({
+                      index: Math.max(0, Math.min(info.index, (showing?.length || 1) - 1)),
+                      animated: true
+                    });
+                  }, 120);
                 }}
-              >
-                {/* PIN / UNPIN */}
-                <TouchableOpacity
-                  style={{ paddingVertical: 12 }}
-                  onPress={() => {
-                    if (!longPressTarget) return;
-                    const alreadyPinned =
-                      pinnedMessage &&
-                      longPressTarget._id &&
-                      String(longPressTarget._id) === String(pinnedMessage._id);
+              />
+            )}
 
-                    if (alreadyPinned) unpinMessage();
-                    else pinMessage(longPressTarget);
-                  }}
-                >
-                  <Text style={{ fontSize: 16, fontWeight: "600" }}>
-                    {pinnedMessage &&
-                      longPressTarget &&
-                      longPressTarget._id &&
-                      String(longPressTarget._id) === String(pinnedMessage._id)
-                      ? "Unpin"
-                      : "Pin"}
-                  </Text>
-                </TouchableOpacity>
-
-                <View style={{ height: 1, backgroundColor: "#eee" }} />
-
-                {/* COPY */}
-                <TouchableOpacity
-                  style={{ paddingVertical: 12 }}
-                  onPress={() => {
-                    if (!longPressTarget) return;
-                    copyMessageText(longPressTarget);
-                  }}
-                >
-                  <Text style={{ fontSize: 16, fontWeight: "600" }}>Copy</Text>
-                </TouchableOpacity>
-
-                {/* DELETE – ONLY FOR MY MESSAGES */}
-                {longPressTarget &&
-                  String(longPressTarget.senderId) === String(userId) && (
-                    <>
-                      <View style={{ height: 1, backgroundColor: "#eee" }} />
-
-                      <TouchableOpacity
-                        style={{ paddingVertical: 12 }}
-                        onPress={() => {
-                          if (!longPressTarget) return;
-                          deleteMessage(longPressTarget);
-                        }}
-                      >
-                        <Text
-                          style={{
-                            fontSize: 16,
-                            fontWeight: "600",
-                            color: "#ef4444",
-                          }}
-                        >
-                          Delete
-                        </Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-              </View>
-            </TouchableOpacity>
-          </Modal>
-
-          {(isBlocked || isBlockedByThem) && (
-            <View style={styles.blockedOverlay}>
-              <View style={styles.blockedCard}>
-                <Text style={styles.blockedCardText}>
-                  {isBlocked ? "You blocked this contact" : "You cannot message this user"}
-                </Text>
-
-                {isBlocked && (
+            <Modal visible={showAttachmentModal} transparent animationType="fade" onRequestClose={() => setShowAttachmentModal(false)}>
+              <TouchableOpacity style={attachmentModalStyles.overlay} activeOpacity={1} onPress={() => setShowAttachmentModal(false)}>
+                <View style={attachmentModalStyles.menu}>
                   <TouchableOpacity
-                    style={styles.tapToUnblockButton}
-                    onPress={handleUnblockUser}
-                    disabled={blockLoading}
+                    style={attachmentModalStyles.menuItem}
+                    onPress={() => {
+                      setShowAttachmentModal(false);
+                      pickDocuments();
+                    }}
                   >
-                    {blockLoading ? (
-                      <ActivityIndicator size="small" color={COLORS.primary} />
-                    ) : (
-                      <Text style={styles.tapToUnblockText}>Tap to unblock</Text>
-                    )}
+                    <Text style={attachmentModalStyles.menuIcon}>📎</Text>
+                    <Text style={attachmentModalStyles.menuText}>Document</Text>
                   </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          )}
-
-          {!searchModalVisible && (
-            <FlatList
-              ref={flatListRef}
-              data={showing}
-              keyboardShouldPersistTaps="handled"
-              renderItem={renderMessage}
-              keyExtractor={getMessageKey}
-              contentContainerStyle={[
-                styles.messagesContainer,
-                { paddingBottom: insets.bottom + 100 }
-              ]}
-              onContentSizeChange={scrollToBottom}
-              showsVerticalScrollIndicator={false}
-              ListEmptyComponent={
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>{searchQuery ? "No matches found" : "No messages yet"}</Text>
-                  <Text style={styles.emptySubtext}>{searchQuery ? "Try another keyword." : "Start a conversation by sending a message!"}</Text>
-                </View>
-              }
-              onScrollToIndexFailed={(info) => {
-                setTimeout(() => {
-                  flatListRef.current?.scrollToIndex({ index: Math.max(0, Math.min(info.index, (showing?.length || 1) - 1)), animated: true });
-                }, 120);
-              }}
-            />
-          )}
-
-          {selectedImages.length > 0 && (
-            <View style={styles.selectedBar}>
-              <FlatList horizontal data={selectedImages} renderItem={renderSelectedThumb} keyExtractor={(_, i) => `sel-${i}`} showsHorizontalScrollIndicator={false} />
-              <TouchableOpacity style={styles.sendSelectedBtn} onPress={sendAll} disabled={sending}>
-                <Text style={styles.sendSelectedText}>{sending ? "Sending..." : `Send (${selectedImages.length})`}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          {selectedDocuments.length > 0 && (
-            <View style={styles.selectedDocsBar}>
-              <FlatList
-                data={selectedDocuments}
-                renderItem={renderSelectedDoc}
-                keyExtractor={(_, i) => `doc-${i}`}
-                showsVerticalScrollIndicator={false}
-                style={{ maxHeight: 200 }}
-              />
-              <TouchableOpacity style={styles.sendSelectedBtn} onPress={sendAll} disabled={sending}>
-                <Text style={styles.sendSelectedText}>{sending ? "Sending..." : `Send (${selectedDocuments.length})`}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <Modal visible={showAttachmentModal} transparent animationType="fade" onRequestClose={() => setShowAttachmentModal(false)}>
-            <TouchableOpacity style={attachmentModalStyles.overlay} activeOpacity={1} onPress={() => setShowAttachmentModal(false)}>
-              <View style={attachmentModalStyles.menu}>
-                <TouchableOpacity
-                  style={attachmentModalStyles.menuItem}
-                  onPress={() => {
-                    setShowAttachmentModal(false);
-                    pickDocuments();
-                  }}
-                >
-                  <Text style={attachmentModalStyles.menuIcon}>📎</Text>
-                  <Text style={attachmentModalStyles.menuText}>Document</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={attachmentModalStyles.menuItem}
-                  onPress={() => {
-                    pickImages();
-                  }}
-                >
-                  <Text style={attachmentModalStyles.menuIcon}>🖼️</Text>
-                  <Text style={attachmentModalStyles.menuText}>Photo</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          </Modal>
-
-          {!isBlocked && !isBlockedByThem && (
-            <View style={[
-              styles.inputContainer,
-              {
-                position: 'absolute',
-                bottom:
-                  keyboardHeight > 0
-                    ? keyboardHeight + insets.bottom
-                    : insets.bottom,
-                left: 0,
-                right: 0,
-                backgroundColor: '#fff',
-              }
-            ]}>
-              <TouchableOpacity onPress={() => setShowAttachmentModal(true)} style={styles.mediaButton}>
-                <Text style={styles.mediaButtonText}>📎</Text>
-              </TouchableOpacity>
-
-              <TextInput
-                placeholder="Type a message..."
-                placeholderTextColor="#9ca3af"
-                style={styles.input}
-                value={message}
-                onChangeText={(t) => {
-                  setMessage(t);
-                  if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
-                }}
-                multiline
-                editable={!sending}
-              />
-
-              <TouchableOpacity
-                style={[styles.sendButton, sending && styles.sendButtonDisabled]}
-                onPress={sendAll}
-                disabled={sending || (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0)}
-              >
-                <Text style={styles.sendText}>{sending ? "..." : "↑"}</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-
-          <Modal visible={showBlockModal} transparent animationType="fade">
-            <View style={styles.modalOverlay}>
-              <View style={styles.modalContent}>
-                <Text style={styles.modalTitle}>Block User</Text>
-                <Text style={styles.modalMessage}>Are you sure you want to block {name}? You will not be able to send or receive messages from them.</Text>
-                <View style={styles.modalButtons}>
-                  <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setShowBlockModal(false)}>
-                    <Text style={styles.cancelButtonText}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.modalButton, styles.blockConfirmButton]} onPress={handleBlockUser} disabled={blockLoading}>
-                    {blockLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.blockConfirmText}>Block</Text>}
+                  <TouchableOpacity
+                    style={attachmentModalStyles.menuItem}
+                    onPress={() => {
+                      pickImages();
+                    }}
+                  >
+                    <Text style={attachmentModalStyles.menuIcon}>🖼️ </Text>
+                    <Text style={attachmentModalStyles.menuText}>Photo</Text>
                   </TouchableOpacity>
                 </View>
-              </View>
-            </View>
-          </Modal>
+              </TouchableOpacity>
+            </Modal>
 
-          <Modal visible={viewerVisible} animationType="slide" onRequestClose={closeViewer}>
-            <SafeAreaView style={viewerStyles.modal}>
-              <View style={viewerStyles.header}>
-                <TouchableOpacity onPress={closeViewer} style={viewerStyles.closeButton}>
-                  <Text style={viewerStyles.closeText}>Close</Text>
-                </TouchableOpacity>
-                <Text style={viewerStyles.counter}>{viewerIndex + 1}/{selectedImages.length || 1}</Text>
-              </View>
-
-              <View style={viewerStyles.content}>
-                {selectedImages[viewerIndex] ? (
-                  isVideoFile(selectedImages[viewerIndex].uri, selectedImages[viewerIndex].type) ? (
-                    <Video
-                      source={{ uri: selectedImages[viewerIndex].uri }}
-                      style={viewerStyles.fullVideo}
-                      controls={true}
-                      resizeMode="contain"
-                      paused={false}
-                      repeat={false}
-                    />
-                  ) : (
-                    <ScrollView
-                      style={viewerStyles.scrollView}
-                      contentContainerStyle={viewerStyles.scrollContent}
-                      maximumZoomScale={Platform.OS === "ios" ? 3 : 1.5}
-                      minimumZoomScale={1}
-                      showsVerticalScrollIndicator={false}
+            {!isBlocked && !isBlockedByThem && (
+              <View style={{ backgroundColor: '#fff' }}>
+                {selectedImages.length > 0 && (
+                  <View style={styles.selectedBar}>
+                    <FlatList
+                      horizontal
+                      data={selectedImages}
+                      renderItem={renderSelectedThumb}
+                      keyExtractor={(_, i) => `sel-${i}`}
                       showsHorizontalScrollIndicator={false}
-                    >
-                      <Image
-                        source={{ uri: selectedImages[viewerIndex].uri }}
-                        style={viewerStyles.fullImage}
-                        resizeMode="contain"
-                      />
-                    </ScrollView>
-                  )
-                ) : (
-                  <Text style={viewerStyles.noImageText}>No media</Text>
+                    />
+                    <TouchableOpacity style={styles.sendSelectedBtn} onPress={sendAll} disabled={sending}>
+                      <Text style={styles.sendSelectedText}>
+                        {sending ? "Sending..." : `Send (${selectedImages.length})`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
-              </View>
 
-              {!viewingSentImage && selectedImages.length > 1 && (
-                <View style={viewerStyles.navigation}>
+                {selectedDocuments.length > 0 && (
+                  <View style={styles.selectedDocsBar}>
+                    <FlatList
+                      data={selectedDocuments}
+                      renderItem={renderSelectedDoc}
+                      keyExtractor={(_, i) => `doc-${i}`}
+                      showsVerticalScrollIndicator={false}
+                      style={{ maxHeight: 200 }}
+                    />
+                    <TouchableOpacity style={styles.sendSelectedBtn} onPress={sendAll} disabled={sending}>
+                      <Text style={styles.sendSelectedText}>
+                        {sending ? "Sending..." : `Send (${selectedDocuments.length})`}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                <View
+                  style={[
+                    styles.inputContainer,
+                    {
+                      paddingBottom: isKeyboardVisible ? 12 : (Platform.OS === 'android' ? insets.bottom : 12),
+                    }
+                  ]}
+                >
                   <TouchableOpacity
-                    disabled={viewerIndex <= 0}
-                    onPress={() => setViewerIndex((p) => Math.max(0, p - 1))}
-                    style={viewerStyles.navButton}
+                    onPress={() => setShowAttachmentModal(true)}
+                    style={styles.mediaButton}
                   >
-                    <Text style={[viewerStyles.navText, viewerIndex <= 0 && viewerStyles.navDisabled]}>
-                      Previous
-                    </Text>
+                    <Text style={styles.mediaButtonText}>📎</Text>
                   </TouchableOpacity>
+
+                  <TextInput
+                    placeholder="Type a message..."
+                    placeholderTextColor="#9ca3af"
+                    style={styles.input}
+                    value={message}
+                    onChangeText={(t) => {
+                      setMessage(t);
+                      if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
+                    }}
+                    multiline
+                    editable={!sending}
+                  />
+
                   <TouchableOpacity
-                    disabled={viewerIndex >= selectedImages.length - 1}
-                    onPress={() => setViewerIndex((p) => Math.min(selectedImages.length - 1, p + 1))}
-                    style={viewerStyles.navButton}
+                    style={[styles.sendButton, sending && styles.sendButtonDisabled]}
+                    onPress={sendAll}
+                    disabled={sending || (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0)}
                   >
-                    <Text style={[viewerStyles.navText, viewerIndex >= selectedImages.length - 1 && viewerStyles.navDisabled]}>
-                      Next
-                    </Text>
+                    <Text style={styles.sendText}>{sending ? "..." : "↑"}</Text>
                   </TouchableOpacity>
                 </View>
-              )}
-            </SafeAreaView>
-          </Modal>
-        </View>
-      </SafeAreaView >
-    </View >
+              </View>
+            )}
+
+            <Modal visible={showBlockModal} transparent animationType="fade">
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                  <Text style={styles.modalTitle}>Block User</Text>
+                  <Text style={styles.modalMessage}>Are you sure you want to block {name}? You will not be able to send or receive messages from them.</Text>
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity style={[styles.modalButton, styles.cancelButton]} onPress={() => setShowBlockModal(false)}>
+                      <Text style={styles.cancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={[styles.modalButton, styles.blockConfirmButton]} onPress={handleBlockUser} disabled={blockLoading}>
+                      {blockLoading ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.blockConfirmText}>Block</Text>}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+
+            <Modal visible={viewerVisible} animationType="slide" onRequestClose={closeViewer}>
+              <SafeAreaView style={viewerStyles.modal}>
+                <View style={viewerStyles.header}>
+                  <TouchableOpacity onPress={closeViewer} style={viewerStyles.closeButton}>
+                    <Text style={viewerStyles.closeText}>Close</Text>
+                  </TouchableOpacity>
+                  <Text style={viewerStyles.counter}>{viewerIndex + 1}/{selectedImages.length || 1}</Text>
+                </View>
+
+                <View style={viewerStyles.content}>
+                  {selectedImages[viewerIndex] ? (
+                    isVideoFile(selectedImages[viewerIndex].uri, selectedImages[viewerIndex].type) ? (
+                      <Video
+                        source={{ uri: selectedImages[viewerIndex].uri }}
+                        style={viewerStyles.fullVideo}
+                        controls={true}
+                        resizeMode="contain"
+                        paused={false}
+                        repeat={false}
+                      />
+                    ) : (
+                      <ScrollView
+                        style={viewerStyles.scrollView}
+                        contentContainerStyle={viewerStyles.scrollContent}
+                        maximumZoomScale={Platform.OS === "ios" ? 3 : 1.5}
+                        minimumZoomScale={1}
+                        showsVerticalScrollIndicator={false}
+                        showsHorizontalScrollIndicator={false}
+                      >
+                        <Image
+                          source={{ uri: selectedImages[viewerIndex].uri }}
+                          style={viewerStyles.fullImage}
+                          resizeMode="contain"
+                        />
+                      </ScrollView>
+                    )
+                  ) : (
+                    <Text style={viewerStyles.noImageText}>No media</Text>
+                  )}
+                </View>
+
+                {!viewingSentImage && selectedImages.length > 1 && (
+                  <View style={viewerStyles.navigation}>
+                    <TouchableOpacity
+                      disabled={viewerIndex <= 0}
+                      onPress={() => setViewerIndex((p) => Math.max(0, p - 1))}
+                      style={viewerStyles.navButton}
+                    >
+                      <Text style={[viewerStyles.navText, viewerIndex <= 0 && viewerStyles.navDisabled]}>
+                        Previous
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      disabled={viewerIndex >= selectedImages.length - 1}
+                      onPress={() => setViewerIndex((p) => Math.min(selectedImages.length - 1, p + 1))}
+                      style={viewerStyles.navButton}
+                    >
+                      <Text style={[viewerStyles.navText, viewerIndex >= selectedImages.length - 1 && viewerStyles.navDisabled]}>
+                        Next
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </SafeAreaView>
+            </Modal>
+          </View>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 };
 
@@ -2081,8 +2202,8 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flexDirection: "row",
-    padding: 12,
-    paddingBottom: 12,
+    paddingHorizontal: 12,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderColor: "#e5e7eb",
     alignItems: "flex-end",
@@ -2092,7 +2213,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.08,
     shadowRadius: 6,
     elevation: 5,
-    zIndex: 1000,
   },
   mediaButton: { padding: 6, marginRight: 6, backgroundColor: "#f3f4f6", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   mediaButtonText: { fontSize: 16 },
