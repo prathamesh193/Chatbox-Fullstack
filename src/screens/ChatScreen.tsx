@@ -35,6 +35,9 @@ import FileViewer from 'react-native-file-viewer';
 import Video from 'react-native-video';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Clipboard from "@react-native-clipboard/clipboard";
+import {  deleteMessageForMe,  deleteMessageForEveryone,} from "../utils/api";
+import { clearChatApi } from "../utils/api";
+
 
 type MessageType = {
   _id?: string;
@@ -48,6 +51,8 @@ type MessageType = {
   documentSize?: number | null;
   status?: "sent" | "delivered" | "read";
   createdAt?: string;
+  isDeletedForEveryone?: boolean;
+
 };
 
 type SelectedImage = {
@@ -81,7 +86,7 @@ const ChatScreen: React.FC = () => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-  const { socket, userId, emitTyping } = useSocket();
+const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
 
@@ -124,73 +129,6 @@ const ChatScreen: React.FC = () => {
   const PIN_STORAGE_KEY = (chatId: string) => `pinned:${chatId}`;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-
-
-
-  // Auto-scroll when keyboard opens
-  // useEffect(() => {
-  //   if (keyboardHeight > 0) {
-  //     setTimeout(() => {
-  //       flatListRef.current?.scrollToEnd({ animated: true });
-  //     }, 100);
-  //   }
-  // }, [keyboardHeight]);
-
-  useEffect(() => {
-    // Listen for focus event to refresh data when screen comes into focus
-    const unsubscribe = navigation.addListener('focus', () => {
-      console.log('ChatScreen focused, refreshing data');
-
-      // Force reload messages when screen comes into focus
-      if (chatPartnerId && userId) {
-        setLoading(true);
-        setMessages([]);
-        setFilteredMessages(null);
-        setPinnedMessage(null);
-
-        // Reload messages
-        api.get(`/api/messages/${chatPartnerId}`)
-          .then((messagesRes) => {
-            setMessages(messagesRes.data || []);
-
-            // Reload pinned message
-            AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId))
-              .then((pinnedId) => {
-                if (pinnedId) {
-                  const found = (messagesRes.data || []).find((m: MessageType) =>
-                    String(m._id) === String(pinnedId)
-                  );
-                  if (found) setPinnedMessage(found);
-                  else {
-                    AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
-                    setPinnedMessage(null);
-                  }
-                }
-              })
-              .catch(() => setPinnedMessage(null));
-
-            // Check blocked status
-            api.get(`/api/users/blocked`)
-              .then((blockedRes) => {
-                const blockedUsers = blockedRes.data || [];
-                const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
-                setIsBlocked(isBlockedLocal);
-              })
-              .catch(() => setIsBlocked(false));
-          })
-          .catch((err) => {
-            console.warn("load messages error", err);
-          })
-          .finally(() => {
-            setLoading(false);
-            setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 100);
-          });
-      }
-    });
-
-    return unsubscribe;
-  }, [navigation, chatPartnerId, userId]);
-
   // -------------------------
   // Presence events
   // -------------------------
@@ -388,6 +326,7 @@ const ChatScreen: React.FC = () => {
     };
   }, [socket, userId]);
 
+
   // -------------------------
   // Socket: Typing indicators
   // -------------------------
@@ -437,39 +376,57 @@ const ChatScreen: React.FC = () => {
       try {
         // STEP 1: Load messages first (always show existing messages)
         const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
+        const clearedAt = await AsyncStorage.getItem(`clearedAt:${chatPartnerId}`);
+        let msgs = messagesRes.data || [];
+        let clearedTime: number | null = null;
 
-        if (mounted) {
-          setMessages(messagesRes.data || []);
+        if (clearedAt) {
+          clearedTime = new Date(clearedAt).getTime();
+          msgs = msgs.filter(
+            (m: MessageType) =>
+              m.createdAt &&
+              new Date(m.createdAt).getTime() > clearedTime!
+          );
+        }
 
-          // STEP 2: Load pinned message
-          try {
-            const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
-            if (pinnedId) {
-              const found = (messagesRes.data || []).find((m: MessageType) => String(m._id) === String(pinnedId));
-              if (found) setPinnedMessage(found);
-              else {
-                await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
-                setPinnedMessage(null);
-              }
+        setMessages((prev) => {
+          const apiIds = new Set(msgs.map((m: MessageType) => m._id).filter((id: string | undefined) => id));
+          const existingNewer = prev.filter((m) => {
+            if (!m._id || apiIds.has(m._id)) return false;
+            if (clearedTime && (!m.createdAt || new Date(m.createdAt).getTime() <= clearedTime)) return false;
+            return true;
+          });
+          return [...msgs, ...existingNewer];
+        });
+
+        // STEP 2: Load pinned message
+        try {
+          const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
+          if (pinnedId) {
+            const found = (messagesRes.data || []).find((m: MessageType) => String(m._id) === String(pinnedId));
+            if (found) setPinnedMessage(found);
+            else {
+              await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+              setPinnedMessage(null);
             }
-          } catch (pinErr) {
-            setPinnedMessage(null);
           }
+        } catch (pinErr) {
+          setPinnedMessage(null);
+        }
 
-          // STEP 3: Check if I blocked them
-          try {
-            const blockedRes = await api.get(`/api/users/blocked`);
-            const blockedUsers = blockedRes.data || [];
-            const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
-            setIsBlocked(isBlockedLocal);
+        // STEP 3: Check if I blocked them
+        try {
+          const blockedRes = await api.get(`/api/users/blocked`);
+          const blockedUsers = blockedRes.data || [];
+          const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
+          setIsBlocked(isBlockedLocal);
 
-            // If I didn't block them, they might have blocked me
-            // We can't check this without backend, so just assume false
-            setIsBlockedByThem(false);
-          } catch (blockError) {
-            setIsBlocked(false);
-            setIsBlockedByThem(false);
-          }
+          // If I didn't block them, they might have blocked me
+          // We can't check this without backend, so just assume false
+          setIsBlockedByThem(false);
+        } catch (blockError) {
+          setIsBlocked(false);
+          setIsBlockedByThem(false);
         }
       } catch (err: any) {
         console.warn("load messages error", err);
@@ -979,43 +936,54 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  const deleteMessage = async (msg: MessageType) => {
-    if (!msg || !msg._id) {
-      Alert.alert("Error", "Cannot delete this message");
-      return;
+ const handleDeleteMessage = async (msg: MessageType) => {
+  if (!msg._id) return;
+
+  const messageId = msg._id;
+  const isMine = String(msg.senderId) === String(userId);
+
+  setLongPressMenuVisible(false);
+
+  // Delete for me (immediate UI update)
+  setMessages(prev => prev.filter(m => m._id !== messageId));
+
+  // Unpin if needed
+  if (pinnedMessage && String(pinnedMessage._id) === messageId) {
+    await savePinnedToStorage(chatPartnerId, null);
+    setPinnedMessage(null);
+  }
+
+  try {
+    await deleteMessageForMe(messageId);
+  } catch (e) {
+    console.warn("Delete for me failed", e);
+  }
+
+  // Delete for everyone (only sender)
+  if (isMine) {
+    try {
+      await deleteMessageForEveryone(messageId);
+
+      setMessages(prev =>
+        prev.map(m =>
+          m._id === messageId
+            ? {
+                ...m,
+                isDeletedForEveryone: true,
+                text: null,
+                image: null,
+                document: null,
+              }
+            : m
+        )
+      );
+
+      emitDeleteForEveryone(messageId, chatPartnerId);
+    } catch (e) {
+      console.warn("Delete for everyone failed", e);
     }
-
-    // Allow delete ONLY for my messages
-    if (String(msg.senderId) !== String(userId)) {
-      Alert.alert("Not allowed", "You can delete only your own messages");
-      return;
-    }
-
-    Alert.alert(
-      "Delete Message",
-      "Are you sure you want to delete this message?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            setLongPressMenuVisible(false);
-
-            // FRONTEND-ONLY delete
-            setMessages(prev => prev.filter(m => m._id !== msg._id));
-
-            // If pinned message is deleted → unpin
-            if (pinnedMessage && String(pinnedMessage._id) === String(msg._id)) {
-              await savePinnedToStorage(chatPartnerId, null);
-              setPinnedMessage(null);
-            }
-          },
-        },
-      ]
-    );
-  };
-
+  }
+};
 
   // -------------------------
   // Send message
@@ -1500,15 +1468,30 @@ const ChatScreen: React.FC = () => {
             )}
 
             {/* TEXT MESSAGE */}
-            {item.text && (
-              <View style={{ marginBottom: 2 }}>
-                {isMine ? (
-                  <Text style={styles.myMessageText}>{item.text}</Text>
-                ) : (
-                  renderHighlightedText(item.text, index)
-                )}
-              </View>
-            )}
+           {/* DELETED MESSAGE (WHATSAPP STYLE) */}
+{item.isDeletedForEveryone ? (
+  <View style={{ marginBottom: 2 }}>
+    <Text
+      style={[
+        styles.deletedMessageText,
+        isMine ? styles.deletedMine : styles.deletedTheirs,
+      ]}
+    >
+      🚫 This message was deleted
+    </Text>
+  </View>
+) : (
+  item.text && (
+    <View style={{ marginBottom: 2 }}>
+      {isMine ? (
+        <Text style={styles.myMessageText}>{item.text}</Text>
+      ) : (
+        renderHighlightedText(item.text, index)
+      )}
+    </View>
+  )
+)}
+
 
             {/* FOOTER: TIME + PIN + STATUS TICKS (WhatsApp style - inline with text) */}
             <View style={styles.messageFooter}>
@@ -1557,13 +1540,46 @@ const ChatScreen: React.FC = () => {
     );
   }
 
-  const handleClearChat = () => {
-    setMenuVisible(false);
-    Alert.alert(
-      "Clear Chat",
-      "This functionality will be available soon."
-    );
-  };
+const handleClearChat = () => {
+  setMenuVisible(false);
+
+  Alert.alert(
+    "Clear chat",
+    "This will delete all messages in this chat only for you.",
+    [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            // Clear UI immediately
+            setMessages([]);
+            setFilteredMessages(null);
+
+            // Save cleared time locally
+            await AsyncStorage.setItem(
+              `clearedAt:${chatPartnerId}`,
+              new Date().toISOString()
+            );
+
+            // Remove pinned message
+            await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+            setPinnedMessage(null);
+
+            // Call backend
+            await clearChatApi(chatPartnerId);
+
+            Alert.alert("Chat cleared");
+          } catch (e) {
+            console.warn("Clear chat failed", e);
+            Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
+          }
+        },
+      },
+    ]
+  );
+};
 
 
   const handleReportUser = () => {
@@ -1816,31 +1832,76 @@ const ChatScreen: React.FC = () => {
                     <Text style={{ fontSize: 16, fontWeight: "600" }}>Copy</Text>
                   </TouchableOpacity>
 
-                  {/* DELETE – ONLY FOR MY MESSAGES */}
-                  {longPressTarget &&
-                    String(longPressTarget.senderId) === String(userId) && (
-                      <>
-                        <View style={{ height: 1, backgroundColor: "#eee" }} />
+                  {/* DELETE OPTIONS */}
+{longPressTarget && (
+  <>
+    <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-                        <TouchableOpacity
-                          style={{ paddingVertical: 12 }}
-                          onPress={() => {
-                            if (!longPressTarget) return;
-                            deleteMessage(longPressTarget);
-                          }}
-                        >
-                          <Text
-                            style={{
-                              fontSize: 16,
-                              fontWeight: "600",
-                              color: "#ef4444",
-                            }}
-                          >
-                            Delete
-                          </Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
+    {/* DELETE FOR ME */}
+    <TouchableOpacity
+      style={{ paddingVertical: 12 }}
+      onPress={async () => {
+        await deleteMessageForMe(longPressTarget._id!);
+
+        setMessages(prev =>
+          prev.filter(m => m._id !== longPressTarget._id)
+        );
+
+        setLongPressMenuVisible(false);
+      }}
+    >
+      <Text style={{ fontSize: 16, fontWeight: "600" }}>
+        Delete for me
+      </Text>
+    </TouchableOpacity>
+
+    {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
+  <>
+  <View style={{ height: 1, backgroundColor: "#eee" }} />
+
+  <TouchableOpacity
+    style={{ paddingVertical: 12 }}
+    onPress={async () => {
+     try {
+  await deleteMessageForEveryone(longPressTarget._id!);
+
+  setMessages(prev =>
+    prev.map(m =>
+      m._id === longPressTarget._id
+        ? {
+            ...m,
+            isDeletedForEveryone: true,
+            text: null,
+            image: null,
+            document: null,
+          }
+        : m
+    )
+  );
+
+  emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
+} catch (e: any) {
+  Alert.alert(
+    "Cannot delete message",
+    "You can’t delete this message for everyone anymore."
+  );
+} finally {
+  setLongPressMenuVisible(false);
+}
+
+    }}
+  >
+    <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
+      Delete for everyone
+    </Text>
+  </TouchableOpacity>
+</>
+
+    
+  </>
+)}
+
+
                 </View>
               </TouchableOpacity>
             </Modal>
@@ -2357,6 +2418,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.primary,
   },
+  deletedMessageText: {
+  fontSize: 13,
+  fontStyle: "italic",
+  opacity: 0.75,
+},
+
+deletedMine: {
+  color: "rgba(255,255,255,0.85)",
+},
+
+deletedTheirs: {
+  color: "#6b7280",
+},
+
 });
 
 const viewerStyles = StyleSheet.create({
@@ -2400,6 +2475,11 @@ const viewerStyles = StyleSheet.create({
   navButton: { paddingHorizontal: 18, paddingVertical: 10 },
   navText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   navDisabled: { color: "#666" },
+  deletedMessageText: {
+  fontSize: 13,
+  fontStyle: "italic",
+  opacity: 0.75,
+},
 });
 
 const searchModalStyles = StyleSheet.create({

@@ -7,6 +7,20 @@ export const api = axios.create({
   baseURL: ENV.API_URL,  // This should be: http://139.59.87.161:3000
   timeout: 30000,
 });
+// Delete message for me
+export const deleteMessageForMe = (messageId: string) => {
+  return api.delete(`/api/messages/${messageId}/for-me`);
+};
+
+// Delete message for everyone
+export const deleteMessageForEveryone = (messageId: string) => {
+  return api.delete(`/api/messages/${messageId}/for-everyone`);
+};
+
+export const clearChatApi = (otherUserId: string) => {
+  return api.delete(`/api/messages/clear-chat/${otherUserId}`);
+};
+
 
 // Add auth token
 api.interceptors.request.use(async (config) => {
@@ -29,5 +43,6 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
 
 export const authApi = api;

@@ -24,6 +24,7 @@ import { api } from "../utils/api";
 import { formatMessageTime } from "../utils/time";
 import SystemNavigationBar from "react-native-system-navigation-bar";
 
+
 const brahmanLogo = require('../assets/brahman-logo.jpeg');
 const TAB_CONTACTS = "contacts";
 const TAB_CHATS = "chats";
@@ -274,66 +275,58 @@ const HomeScreen = () => {
       item.updatedAt ||
       null;
 
-    return (
-      <TouchableOpacity
-        style={styles.userCard}
-        onPress={() =>
-          navigation.navigate("Chat", {
-            userId: item._id,
-            name: item.fullName,
-          })
-        }
-        onLongPress={() => openActionMenu(item)}
-      >
-        <View style={styles.avatarContainer}>
-          <Image
-            source={{
-              uri:
-                item.profilePic ||
-                "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-            }}
-            style={styles.avatar}
-          />
-        </View>
+return (
+  <TouchableOpacity
+    style={styles.igRow}
+    onPress={() =>
+      navigation.navigate("Chat", {
+        userId: item._id,
+        name: item.fullName,
+      })
+    }
+    onLongPress={() => openActionMenu(item)}
+  >
+    {/* Avatar */}
+    <Image
+      source={{
+        uri:
+          item.profilePic ||
+          "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+      }}
+      style={styles.igAvatar}
+    />
 
-        <View style={styles.userInfo}>
-          <View
-            style={{
-              flexDirection: "row",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <Text style={styles.name}>{item.fullName}</Text>
+    {/* Middle */}
+    <View style={styles.igContent}>
+      <View style={styles.igTopRow}>
+        <Text style={styles.igName} numberOfLines={1}>
+          {item.fullName}
+        </Text>
 
-            {selectedTab === TAB_CHATS && lastTime && (
-              <Text style={{ fontSize: 12, color: "#9ca3af" }}>
-                {formatMessageTime(lastTime)}
-              </Text>
-            )}
-          </View>
-
-          <Text
-            numberOfLines={1}
-            style={[styles.lastSeen, isUnread && styles.unreadText]}
-          >
-            {lastText}
+        {lastTime && (
+          <Text style={styles.igTime}>
+            {formatMessageTime(lastTime)}
           </Text>
+        )}
+      </View>
 
-        </View>
+      <Text
+        numberOfLines={1}
+        style={[styles.igMessage, isUnread && styles.igUnread]}
+      >
+        {lastText}
+      </Text>
+    </View>
 
-        <View style={styles.chatArrow}>
-          {isUnread ? (
-            <Text style={styles.unreadDot}>●</Text>
-          ) : isPinned ? (
-            <Text style={styles.pinIcon}>📌</Text>
-          ) : (
-            <Text style={styles.chatArrowIcon}>›</Text>
-          )}
-        </View>
+    {/* Right indicator */}
+    {isUnread ? (
+      <View style={styles.igUnreadDot} />
+    ) : isPinned ? (
+      <Text style={styles.igPin}>📌</Text>
+    ) : null}
+  </TouchableOpacity>
+);
 
-      </TouchableOpacity>
-    );
   };
 
   // ------------------------------------------------------
@@ -432,16 +425,18 @@ const HomeScreen = () => {
 
       {/* SEARCH BAR */}
       <View style={searchStyles.searchRow}>
-        <TextInput
-          placeholder={
-            selectedTab === TAB_CONTACTS
-              ? "Search contacts..."
-              : "Search chats..."
-          }
-          value={search}
-          onChangeText={setSearch}
-          style={searchStyles.searchInput}
-        />
+<TextInput
+  placeholder={
+    selectedTab === TAB_CONTACTS
+      ? "Search contacts"
+      : "Search chats"
+  }
+  placeholderTextColor="#9ca3af"
+  value={search}
+  onChangeText={setSearch}
+  style={searchStyles.searchInput}
+/>
+
 
         <TouchableOpacity style={searchStyles.refreshBtn} onPress={fetchLists}>
           <Text style={searchStyles.refreshText}>⟳</Text>
@@ -605,22 +600,24 @@ const styles = StyleSheet.create({
     elevation: 8, // was 10
   },
 
-  headerLeft: {
-    flexDirection: "column",
-  },
+headerLeft: {
+  flex: 1,
+  alignItems: "center",
+},
+
 
   headerTitle: {
     color: "#fff",
     fontSize: 28, // was 36
-    fontWeight: "800",
-    letterSpacing: -0.5, // was -1
+    fontWeight: "700",
+    letterSpacing: 0.5, // was -1
     marginBottom: 2, // was 4
   },
 
   headerSubtitle: {
     color: "rgba(255,255,255,0.9)",
-    fontSize: 14, // was 16
-    fontWeight: "600",
+    fontSize: 13.5, // was 16
+    fontWeight: "500",
   },
 
   profileIconContainer: {
@@ -959,6 +956,76 @@ const styles = StyleSheet.create({
     height: 40,
   },
 
+    /* Instagram-style rows */
+  igRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: "#f8fafc",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+
+igAvatar: {
+  width: 44,
+  height: 44,
+  borderRadius: 22,
+  marginRight: 12,
+  backgroundColor: "#e5e7eb",
+},
+
+
+  igContent: {
+    flex: 1,
+  },
+
+igTopRow: {
+  flexDirection: "row",
+  alignItems: "center",
+},
+
+
+
+igName: {
+  fontSize: 16,
+  fontWeight: "600",
+  color: "#111827",
+  flex: 1,
+},
+
+igTime: {
+  fontSize: 11,
+  color: "#9ca3af",
+  marginLeft: 8,
+},
+
+igMessage: {
+  fontSize: 13,
+  color: "#6b7280",
+  marginTop: 1,
+  letterSpacing: 0.2,
+},
+
+igUnread: {
+  fontWeight: "600",
+  color: "#111827",
+},
+
+igUnreadDot: {
+  width: 7,
+  height: 7,
+  borderRadius: 3.5,
+  backgroundColor: COLORS.primary,
+  marginLeft: 10,
+},
+
+
+  igPin: {
+    fontSize: 14,
+    marginLeft: 8,
+  },
+
 });
 
 /* Tabs styles */
@@ -970,23 +1037,25 @@ const tabsStyles = StyleSheet.create({
     gap: 10, // was 12
   },
 
-  tabButton: {
-    flex: 1,
-    paddingVertical: 10, // was 12
-    borderRadius: 12,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
-    alignItems: "center",
-  },
+tabButton: {
+  flex: 1,
+  paddingVertical: 10,
+  borderRadius: 20,
+  backgroundColor: "#f1f5f9",
+  flexDirection: "row",
+  justifyContent: "center",
+  alignItems: "center",
+  gap: 6,
+},
+
   tabActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
   },
   tabText: {
-    fontSize: 15, // was 16
-    fontWeight: "600",
-    color: COLORS.textDark,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748b",
   },
   tabTextActive: {
     color: "#fff",
@@ -1002,31 +1071,37 @@ const searchStyles = StyleSheet.create({
     alignItems: "center",
   },
 
-  searchInput: {
-    flex: 1,
-    height: 42, // was 44
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    fontSize: 15, // ADD THIS
-  },
+searchInput: {
+  flex: 1,
+  height: 40,
+  backgroundColor: "#ffffff",
+  borderRadius: 20,
+  paddingHorizontal: 16,
+  borderWidth: 1,
+  borderColor: "#e5e7eb",
+  fontSize: 14,
+  color: "#111827",
+},
 
-  refreshBtn: {
-    marginLeft: 8,
-    width: 42, // was 44
-    height: 42, // was 44
-    borderRadius: 12,
-    backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  refreshText: {
-    fontSize: 18,
-  },
+
+refreshBtn: {
+  marginLeft: 8,
+  width: 40,
+  height: 40,
+  borderRadius: 20,
+  backgroundColor: "#ffffff",
+  justifyContent: "center",
+  alignItems: "center",
+  borderWidth: 1,
+  borderColor: "#e5e7eb",
+},
+
+refreshText: {
+  fontSize: 18,
+  color: COLORS.primary,
+  fontWeight: "600",
+},
+
   contactTime: {
     fontSize: 12,
     color: "#64748b",
