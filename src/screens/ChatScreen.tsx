@@ -35,7 +35,7 @@ import FileViewer from 'react-native-file-viewer';
 import Video from 'react-native-video';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Clipboard from "@react-native-clipboard/clipboard";
-import {  deleteMessageForMe,  deleteMessageForEveryone,} from "../utils/api";
+import { deleteMessageForMe, deleteMessageForEveryone, } from "../utils/api";
 import { clearChatApi } from "../utils/api";
 
 
@@ -86,7 +86,7 @@ const ChatScreen: React.FC = () => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
+  const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
 
@@ -251,9 +251,12 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
         (String(msg.receiverId) === String(chatPartnerId) && String(msg.senderId) === String(userId));
 
       if (!relevant) return;
+
+      // Skip if this is a message we already have (including temp messages we sent)
       if (msg._id && sentMessageIds.current.has(msg._id)) return;
 
       setMessages((prev) => {
+        // Check for existing message by ID
         const exists = prev.some((m) => m._id === msg._id);
         if (exists) return prev;
 
@@ -455,6 +458,58 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
   }, [chatPartnerId, userId]);
 
   useEffect(() => {
+    if (!socket) {
+      console.warn("⚠️ [SOCKET] Socket is not initialized");
+      return;
+    }
+
+    const onConnect = () => {
+      console.log("✅ [SOCKET] Connected to server");
+    };
+
+    const onDisconnect = (reason: string) => {
+      console.warn("❌ [SOCKET] Disconnected:", reason);
+      if (reason === 'io server disconnect') {
+        // Server disconnected, try to reconnect
+        socket.connect();
+      }
+    };
+
+    const onConnectError = (error: any) => {
+      console.error("❌ [SOCKET] Connection error:", error);
+    };
+
+    const onReconnect = (attemptNumber: number) => {
+      console.log("🔄 [SOCKET] Reconnected after", attemptNumber, "attempts");
+    };
+
+    const onReconnectAttempt = (attemptNumber: number) => {
+      console.log("🔄 [SOCKET] Reconnection attempt", attemptNumber);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+    socket.on("reconnect", onReconnect);
+    socket.on("reconnect_attempt", onReconnectAttempt);
+
+    // Log current connection status
+    console.log("📊 [SOCKET] Initial status:", {
+      connected: socket.connected,
+      id: socket.id,
+    });
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
+      socket.off("reconnect", onReconnect);
+      socket.off("reconnect_attempt", onReconnectAttempt);
+    };
+  }, [socket]);
+
+
+  useEffect(() => {
     const keyboardWillShow = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
@@ -542,7 +597,11 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
   };
 
   const pushMessage = (newMsg: MessageType) => {
-    if (newMsg._id) sentMessageIds.current.add(newMsg._id);
+    // Don't add to sentMessageIds for temporary messages
+    if (newMsg._id && !newMsg._id.startsWith('temp-')) {
+      sentMessageIds.current.add(newMsg._id);
+    }
+
     setMessages((prev) => {
       const exists = prev.some((m) => m._id === newMsg._id);
       if (exists) return prev;
@@ -552,7 +611,7 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
     // Auto-scroll after adding message
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
-    }, 200);
+    }, 100);
 
     (async () => {
       try {
@@ -563,6 +622,7 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
       } catch (e) { }
     })();
   };
+
 
   // -------------------------
   // Document Picker
@@ -936,173 +996,326 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
     }
   };
 
- const handleDeleteMessage = async (msg: MessageType) => {
-  if (!msg._id) return;
+  const handleDeleteMessage = async (msg: MessageType) => {
+    if (!msg._id) return;
 
-  const messageId = msg._id;
-  const isMine = String(msg.senderId) === String(userId);
+    const messageId = msg._id;
+    const isMine = String(msg.senderId) === String(userId);
 
-  setLongPressMenuVisible(false);
+    setLongPressMenuVisible(false);
 
-  // Delete for me (immediate UI update)
-  setMessages(prev => prev.filter(m => m._id !== messageId));
+    // Delete for me (immediate UI update)
+    setMessages(prev => prev.filter(m => m._id !== messageId));
 
-  // Unpin if needed
-  if (pinnedMessage && String(pinnedMessage._id) === messageId) {
-    await savePinnedToStorage(chatPartnerId, null);
-    setPinnedMessage(null);
-  }
+    // Unpin if needed
+    if (pinnedMessage && String(pinnedMessage._id) === messageId) {
+      await savePinnedToStorage(chatPartnerId, null);
+      setPinnedMessage(null);
+    }
 
-  try {
-    await deleteMessageForMe(messageId);
-  } catch (e) {
-    console.warn("Delete for me failed", e);
-  }
-
-  // Delete for everyone (only sender)
-  if (isMine) {
     try {
-      await deleteMessageForEveryone(messageId);
+      await deleteMessageForMe(messageId);
+    } catch (e) {
+      console.warn("Delete for me failed", e);
+    }
 
-      setMessages(prev =>
-        prev.map(m =>
-          m._id === messageId
-            ? {
+    // Delete for everyone (only sender)
+    if (isMine) {
+      try {
+        await deleteMessageForEveryone(messageId);
+
+        setMessages(prev =>
+          prev.map(m =>
+            m._id === messageId
+              ? {
                 ...m,
                 isDeletedForEveryone: true,
                 text: null,
                 image: null,
                 document: null,
               }
-            : m
-        )
-      );
+              : m
+          )
+        );
 
-      emitDeleteForEveryone(messageId, chatPartnerId);
-    } catch (e) {
-      console.warn("Delete for everyone failed", e);
+        emitDeleteForEveryone(messageId, chatPartnerId);
+      } catch (e) {
+        console.warn("Delete for everyone failed", e);
+      }
     }
-  }
-};
+  };
 
   // -------------------------
   // Send message
   // -------------------------
+  // Replace your sendAll function with this fixed version:
+
   const sendAll = async () => {
+    console.log("🚀 [SEND] Starting sendAll");
+    console.log("📊 [SEND] State check:", {
+      isBlocked,
+      messageText: message.trim(),
+      imagesCount: selectedImages.length,
+      docsCount: selectedDocuments.length,
+      sending,
+      userId,
+      chatPartnerId,
+      socketConnected: socket?.connected,
+    });
+
     if (isBlocked) {
       Alert.alert("Blocked", "You cannot send messages to this user");
       return;
     }
-    if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) return;
-    if (sending) return;
+    if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) {
+      console.log("⚠️ [SEND] No content to send");
+      return;
+    }
+    if (sending) {
+      console.log("⚠️ [SEND] Already sending, skipping...");
+      return;
+    }
 
     setSending(true);
 
+    // Capture current state before clearing
+    const textToSend = message.trim();
+    const imagesToSend = [...selectedImages];
+    const docsToSend = [...selectedDocuments];
+
+    console.log("📝 [SEND] Content to send:", {
+      text: textToSend,
+      images: imagesToSend.length,
+      docs: docsToSend.length,
+    });
+
+    // Clear input immediately for better UX
+    setMessage("");
+    setSelectedImages([]);
+    setSelectedDocuments([]);
+
     try {
-      const uploadImageOnly = async (img: SelectedImage): Promise<MessageType> => {
-        const form = new FormData();
-        form.append("file", {
-          uri: img.uri,
-          name: img.name || "photo.jpg",
-          type: img.type || "image/jpeg",
-        } as any);
-        const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        return r.data as MessageType;
-      };
+      // Send text message
+      if (textToSend) {
+        console.log("💬 [SEND] Sending text message:", textToSend);
 
-      const uploadDocumentOnly = async (doc: SelectedDocument): Promise<MessageType> => {
         const form = new FormData();
-        form.append("file", {
-          uri: doc.uri,
-          name: doc.name,
-          type: doc.type || "application/octet-stream",
-        } as any);
-        const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-        return r.data as MessageType;
-      };
+        form.append("text", textToSend);
 
-      // Send text message first if exists
-      if (message.trim()) {
-        const form = new FormData();
-        form.append("text", message.trim());
-
-        if (selectedImages.length > 0) {
-          const first = selectedImages[0];
+        if (imagesToSend.length > 0) {
+          const first = imagesToSend[0];
           form.append("file", {
             uri: first.uri,
             name: first.name || "photo.jpg",
             type: first.type || "image/jpeg",
           } as any);
-        } else if (selectedDocuments.length > 0) {
-          const first = selectedDocuments[0];
+          console.log("📷 [SEND] Attaching first image to text message");
+        } else if (docsToSend.length > 0) {
+          const first = docsToSend[0];
           form.append("file", {
             uri: first.uri,
             name: first.name,
             type: first.type || "application/octet-stream",
           } as any);
+          console.log("📎 [SEND] Attaching first document to text message");
         }
+
+        console.log("🌐 [SEND] Calling API:", `/api/messages/send/${chatPartnerId}`);
 
         const res = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
           headers: { "Content-Type": "multipart/form-data" },
+          timeout: 10000, // 10 second timeout
         });
 
-        const firstMsg = res.data as MessageType;
+        console.log("✅ [SEND] API Response received:", res.data);
+
+        // FIXED: Backend returns { success, message, data } - we need the data object
+        const responseData = res.data.data || res.data; // Handle both formats
+
+        console.log("🔍 [SEND] Response details:", {
+          _id: responseData._id,
+          text: responseData.text,
+          senderId: responseData.senderId,
+          receiverId: responseData.receiverId,
+          createdAt: responseData.createdAt,
+          fullResponse: JSON.stringify(res.data)
+        });
+
+        const firstMsg = responseData as MessageType;
         const msgWithStatus: MessageType = { ...firstMsg, status: "sent" };
-        pushMessage(msgWithStatus);
-        socket?.emit("sendMessage", msgWithStatus);
+
+        console.log("💾 [SEND] Adding message to UI:", msgWithStatus);
+
+        // DIRECT UPDATE - Don't use pushMessage, update state directly
+        setMessages((prev) => {
+          // Check if message already exists
+          const exists = prev.some((m) => m._id === msgWithStatus._id);
+          if (exists) {
+            console.log("⚠️ [SEND] Message already exists, skipping");
+            return prev;
+          }
+          console.log("✅ [SEND] Adding new message to state");
+          return [...prev, msgWithStatus];
+        });
+
+        // Add to sentMessageIds to prevent socket duplicate
+        if (msgWithStatus._id) {
+          sentMessageIds.current.add(msgWithStatus._id);
+        }
+
+        // Scroll to bottom immediately
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300);
+
+        console.log("📡 [SEND] Emitting to socket:", {
+          socketExists: !!socket,
+          socketConnected: socket?.connected,
+          messageId: msgWithStatus._id,
+        });
+
+        if (socket && socket.connected) {
+          socket.emit("sendMessage", msgWithStatus);
+          console.log("✅ [SEND] Socket emit successful");
+        } else {
+          console.error("❌ [SEND] Socket not connected! Message won't be delivered in real-time");
+          Alert.alert("Warning", "Connection issue detected. Message saved but may not deliver immediately.");
+        }
       }
 
       // Send remaining images
-      const imageStartIndex = message.trim() && selectedImages.length > 0 ? 1 : 0;
-      for (let i = imageStartIndex; i < selectedImages.length; i++) {
+      const imageStartIndex = textToSend && imagesToSend.length > 0 ? 1 : 0;
+      for (let i = imageStartIndex; i < imagesToSend.length; i++) {
         try {
-          const imgMsg = await uploadImageOnly(selectedImages[i]);
+          const form = new FormData();
+          form.append("file", {
+            uri: imagesToSend[i].uri,
+            name: imagesToSend[i].name || "photo.jpg",
+            type: imagesToSend[i].type || "image/jpeg",
+          } as any);
+
+          console.log(`📷 [SEND] Uploading image ${i + 1}/${imagesToSend.length}`);
+
+          const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
+            timeout: 30000, // Add 30 second timeout
+          });
+
+          console.log(`✅ [SEND] Image ${i + 1} API response:`, r.data);
+
+          // FIXED: Backend returns { success, message, data } - extract the data
+          const responseData = r.data.data || r.data;
+
+          const imgMsg = responseData as MessageType;
           const imgMsgWithStatus: MessageType = { ...imgMsg, status: "sent" };
-          pushMessage(imgMsgWithStatus);
-          socket?.emit("sendMessage", imgMsgWithStatus);
+
+          // DIRECT UPDATE for images too
+          setMessages((prev) => {
+            const exists = prev.some((m) => m._id === imgMsgWithStatus._id);
+            if (exists) return prev;
+            return [...prev, imgMsgWithStatus];
+          });
+
+          if (imgMsgWithStatus._id) {
+            sentMessageIds.current.add(imgMsgWithStatus._id);
+          }
+
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
+          if (socket && socket.connected) {
+            socket.emit("sendMessage", imgMsgWithStatus);
+          }
+
+          console.log(`✅ [SEND] Image ${i + 1} uploaded successfully`);
         } catch (e) {
-          console.warn("upload image failed:", e);
+          console.error(`❌ [SEND] Image ${i + 1} upload failed:`, e);
         }
       }
 
       // Send remaining documents
-      const docStartIndex =
-        message.trim() && selectedImages.length === 0 && selectedDocuments.length > 0 ? 1 : 0;
-      for (let i = docStartIndex; i < selectedDocuments.length; i++) {
+      const docStartIndex = textToSend && imagesToSend.length === 0 && docsToSend.length > 0 ? 1 : 0;
+      for (let i = docStartIndex; i < docsToSend.length; i++) {
         try {
-          const docMsg = await uploadDocumentOnly(selectedDocuments[i]);
+          console.log(`📎 [SEND] Uploading document ${i + 1}/${docsToSend.length}`);
+
+          const form = new FormData();
+          form.append("file", {
+            uri: docsToSend[i].uri,
+            name: docsToSend[i].name,
+            type: docsToSend[i].type || "application/octet-stream",
+          } as any);
+
+          const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+
+          // FIXED: Backend returns { success, message, data } - extract the data
+          const responseData = r.data.data || r.data;
+
+          // CRITICAL FIX: Backend stores document in 'image' field
+          const docMsg: MessageType = {
+            ...responseData,
+            document: responseData.image || responseData.document,
+            documentName: docsToSend[i].name,
+            documentType: docsToSend[i].type,
+            documentSize: docsToSend[i].size,
+            image: null, // Clear image field since this is a document
+          };
           const docMsgWithStatus: MessageType = { ...docMsg, status: "sent" };
-          pushMessage(docMsgWithStatus);
-          socket?.emit("sendMessage", docMsgWithStatus);
+
+          // DIRECT UPDATE for documents too
+          setMessages((prev) => {
+            const exists = prev.some((m) => m._id === docMsgWithStatus._id);
+            if (exists) return prev;
+            return [...prev, docMsgWithStatus];
+          });
+
+          if (docMsgWithStatus._id) {
+            sentMessageIds.current.add(docMsgWithStatus._id);
+          }
+
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
+          if (socket && socket.connected) {
+            socket.emit("sendMessage", docMsgWithStatus);
+          }
+
+          console.log(`✅ [SEND] Document ${i + 1} uploaded successfully`);
         } catch (e) {
-          console.warn("upload document failed:", e);
+          console.error(`❌ [SEND] Document ${i + 1} upload failed:`, e);
         }
       }
 
-      setMessage("");
-      setSelectedImages([]);
-      setSelectedDocuments([]);
       setViewerVisible(false);
       setViewingSentImage(false);
 
       if (emitTyping) emitTyping(chatPartnerId, false);
 
-      // Multiple scroll attempts to ensure latest message is visible
+      // Scroll to bottom
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 400);
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 600);
+
+      console.log("🎉 [SEND] All messages sent successfully");
     } catch (err: any) {
-      console.warn("send failed", err);
-      if (err.response?.status === 404)
+      console.error("❌ [SEND] Send failed with error:", {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        code: err.code,
+      });
+
+      if (err.response?.status === 404) {
         Alert.alert("Error", "User not found or chat not available");
-      else Alert.alert("Error", "Failed to send messages");
+      } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+        Alert.alert("Timeout", "Server is taking too long to respond. Please check your connection.");
+      } else if (err.code === 'NETWORK_ERROR' || !err.response) {
+        Alert.alert("Network Error", "Cannot connect to server. Please check if backend is running.");
+      } else {
+        Alert.alert("Error", `Failed to send: ${err.message || 'Unknown error'}`);
+      }
     } finally {
       setSending(false);
+      console.log("🏁 [SEND] sendAll completed");
     }
   };
 
@@ -1468,29 +1681,29 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
             )}
 
             {/* TEXT MESSAGE */}
-           {/* DELETED MESSAGE (WHATSAPP STYLE) */}
-{item.isDeletedForEveryone ? (
-  <View style={{ marginBottom: 2 }}>
-    <Text
-      style={[
-        styles.deletedMessageText,
-        isMine ? styles.deletedMine : styles.deletedTheirs,
-      ]}
-    >
-      🚫 This message was deleted
-    </Text>
-  </View>
-) : (
-  item.text && (
-    <View style={{ marginBottom: 2 }}>
-      {isMine ? (
-        <Text style={styles.myMessageText}>{item.text}</Text>
-      ) : (
-        renderHighlightedText(item.text, index)
-      )}
-    </View>
-  )
-)}
+            {/* DELETED MESSAGE (WHATSAPP STYLE) */}
+            {item.isDeletedForEveryone ? (
+              <View style={{ marginBottom: 2 }}>
+                <Text
+                  style={[
+                    styles.deletedMessageText,
+                    isMine ? styles.deletedMine : styles.deletedTheirs,
+                  ]}
+                >
+                  🚫 This message was deleted
+                </Text>
+              </View>
+            ) : (
+              item.text && (
+                <View style={{ marginBottom: 2 }}>
+                  {isMine ? (
+                    <Text style={styles.myMessageText}>{item.text}</Text>
+                  ) : (
+                    renderHighlightedText(item.text, index)
+                  )}
+                </View>
+              )
+            )}
 
 
             {/* FOOTER: TIME + PIN + STATUS TICKS (WhatsApp style - inline with text) */}
@@ -1540,46 +1753,46 @@ const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
     );
   }
 
-const handleClearChat = () => {
-  setMenuVisible(false);
+  const handleClearChat = () => {
+    setMenuVisible(false);
 
-  Alert.alert(
-    "Clear chat",
-    "This will delete all messages in this chat only for you.",
-    [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Clear",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            // Clear UI immediately
-            setMessages([]);
-            setFilteredMessages(null);
+    Alert.alert(
+      "Clear chat",
+      "This will delete all messages in this chat only for you.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Clear UI immediately
+              setMessages([]);
+              setFilteredMessages(null);
 
-            // Save cleared time locally
-            await AsyncStorage.setItem(
-              `clearedAt:${chatPartnerId}`,
-              new Date().toISOString()
-            );
+              // Save cleared time locally
+              await AsyncStorage.setItem(
+                `clearedAt:${chatPartnerId}`,
+                new Date().toISOString()
+              );
 
-            // Remove pinned message
-            await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
-            setPinnedMessage(null);
+              // Remove pinned message
+              await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+              setPinnedMessage(null);
 
-            // Call backend
-            await clearChatApi(chatPartnerId);
+              // Call backend
+              await clearChatApi(chatPartnerId);
 
-            Alert.alert("Chat cleared");
-          } catch (e) {
-            console.warn("Clear chat failed", e);
-            Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
-          }
+              Alert.alert("Chat cleared");
+            } catch (e) {
+              console.warn("Clear chat failed", e);
+              Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
+            }
+          },
         },
-      },
-    ]
-  );
-};
+      ]
+    );
+  };
 
 
   const handleReportUser = () => {
@@ -1833,73 +2046,73 @@ const handleClearChat = () => {
                   </TouchableOpacity>
 
                   {/* DELETE OPTIONS */}
-{longPressTarget && (
-  <>
-    <View style={{ height: 1, backgroundColor: "#eee" }} />
+                  {longPressTarget && (
+                    <>
+                      <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-    {/* DELETE FOR ME */}
-    <TouchableOpacity
-      style={{ paddingVertical: 12 }}
-      onPress={async () => {
-        await deleteMessageForMe(longPressTarget._id!);
+                      {/* DELETE FOR ME */}
+                      <TouchableOpacity
+                        style={{ paddingVertical: 12 }}
+                        onPress={async () => {
+                          await deleteMessageForMe(longPressTarget._id!);
 
-        setMessages(prev =>
-          prev.filter(m => m._id !== longPressTarget._id)
-        );
+                          setMessages(prev =>
+                            prev.filter(m => m._id !== longPressTarget._id)
+                          );
 
-        setLongPressMenuVisible(false);
-      }}
-    >
-      <Text style={{ fontSize: 16, fontWeight: "600" }}>
-        Delete for me
-      </Text>
-    </TouchableOpacity>
+                          setLongPressMenuVisible(false);
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, fontWeight: "600" }}>
+                          Delete for me
+                        </Text>
+                      </TouchableOpacity>
 
-    {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
-  <>
-  <View style={{ height: 1, backgroundColor: "#eee" }} />
+                      {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
+                      <>
+                        <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-  <TouchableOpacity
-    style={{ paddingVertical: 12 }}
-    onPress={async () => {
-     try {
-  await deleteMessageForEveryone(longPressTarget._id!);
+                        <TouchableOpacity
+                          style={{ paddingVertical: 12 }}
+                          onPress={async () => {
+                            try {
+                              await deleteMessageForEveryone(longPressTarget._id!);
 
-  setMessages(prev =>
-    prev.map(m =>
-      m._id === longPressTarget._id
-        ? {
-            ...m,
-            isDeletedForEveryone: true,
-            text: null,
-            image: null,
-            document: null,
-          }
-        : m
-    )
-  );
+                              setMessages(prev =>
+                                prev.map(m =>
+                                  m._id === longPressTarget._id
+                                    ? {
+                                      ...m,
+                                      isDeletedForEveryone: true,
+                                      text: null,
+                                      image: null,
+                                      document: null,
+                                    }
+                                    : m
+                                )
+                              );
 
-  emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
-} catch (e: any) {
-  Alert.alert(
-    "Cannot delete message",
-    "You can’t delete this message for everyone anymore."
-  );
-} finally {
-  setLongPressMenuVisible(false);
-}
+                              emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
+                            } catch (e: any) {
+                              Alert.alert(
+                                "Cannot delete message",
+                                "You can’t delete this message for everyone anymore."
+                              );
+                            } finally {
+                              setLongPressMenuVisible(false);
+                            }
 
-    }}
-  >
-    <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
-      Delete for everyone
-    </Text>
-  </TouchableOpacity>
-</>
+                          }}
+                        >
+                          <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
+                            Delete for everyone
+                          </Text>
+                        </TouchableOpacity>
+                      </>
 
-    
-  </>
-)}
+
+                    </>
+                  )}
 
 
                 </View>
@@ -2419,18 +2632,18 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   deletedMessageText: {
-  fontSize: 13,
-  fontStyle: "italic",
-  opacity: 0.75,
-},
+    fontSize: 13,
+    fontStyle: "italic",
+    opacity: 0.75,
+  },
 
-deletedMine: {
-  color: "rgba(255,255,255,0.85)",
-},
+  deletedMine: {
+    color: "rgba(255,255,255,0.85)",
+  },
 
-deletedTheirs: {
-  color: "#6b7280",
-},
+  deletedTheirs: {
+    color: "#6b7280",
+  },
 
 });
 
@@ -2476,10 +2689,10 @@ const viewerStyles = StyleSheet.create({
   navText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   navDisabled: { color: "#666" },
   deletedMessageText: {
-  fontSize: 13,
-  fontStyle: "italic",
-  opacity: 0.75,
-},
+    fontSize: 13,
+    fontStyle: "italic",
+    opacity: 0.75,
+  },
 });
 
 const searchModalStyles = StyleSheet.create({
