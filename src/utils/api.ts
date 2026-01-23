@@ -7,19 +7,32 @@ export const api = axios.create({
   baseURL: ENV.API_URL,  // This should be: http://139.59.87.161:3000
   timeout: 30000,
 });
-// Delete message for me
+
+// New backend endpoints
 export const deleteMessageForMe = (messageId: string) => {
-  return api.delete(`/api/messages/${messageId}/for-me`);
+  return api.delete(`/api/messages/delete-for-me/${messageId}`);
 };
 
-// Delete message for everyone
 export const deleteMessageForEveryone = (messageId: string) => {
-  return api.delete(`/api/messages/${messageId}/for-everyone`);
+  return api.delete(`/api/messages/delete-for-everyone/${messageId}`);
 };
 
+// Reactions
+export const addReaction = (messageId: string, emoji: string) => {
+  return api.post(`/api/messages/react/${messageId}`, { emoji });
+};
+
+export const removeReaction = (messageId: string) => {
+  return api.delete(`/api/messages/react/${messageId}`);
+};
+
+
+
+// Clear chat
 export const clearChatApi = (otherUserId: string) => {
   return api.delete(`/api/messages/clear-chat/${otherUserId}`);
 };
+
 
 
 // Add auth token

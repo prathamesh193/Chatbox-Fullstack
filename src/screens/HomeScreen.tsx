@@ -280,7 +280,7 @@ return (
     style={styles.igRow}
     onPress={() =>
       navigation.navigate("Chat", {
-        userId: item._id,
+        chatPartnerId: item._id,
         name: item.fullName,
       })
     }
