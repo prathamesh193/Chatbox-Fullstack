@@ -35,7 +35,7 @@ import FileViewer from 'react-native-file-viewer';
 import Video from 'react-native-video';
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Clipboard from "@react-native-clipboard/clipboard";
-import {  deleteMessageForMe,  deleteMessageForEveryone,} from "../utils/api";
+import { deleteMessageForMe, deleteMessageForEveryone, } from "../utils/api";
 import { clearChatApi } from "../utils/api";
 
 
@@ -51,9 +51,7 @@ type MessageType = {
   documentSize?: number | null;
   status?: "sent" | "delivered" | "read";
   createdAt?: string;
-  isDeleted?: boolean;
-  reactions?: { userId: string; emoji: string }[];
-
+  isDeletedForEveryone?: boolean;
 
 };
 
@@ -81,14 +79,14 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 const ChatScreen: React.FC = () => {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-const { chatPartnerId, name } = route.params || {};
-console.log("CHAT PARAMS:", chatPartnerId, name);
+  const { userId: chatPartnerId, name } = route.params || {};
+
   // Hide navigation header
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-const { socket, userId, emitTyping } = useSocket();
+  const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
 
@@ -122,6 +120,7 @@ const { socket, userId, emitTyping } = useSocket();
   const [matchIndexes, setMatchIndexes] = useState<number[]>([]);
   const [currentMatchIdx, setCurrentMatchIdx] = useState<number>(0);
 
+  const sentMessageIds = useRef(new Set<string>());
 
   const [pinnedMessage, setPinnedMessage] = useState<MessageType | null>(null);
   const [longPressMenuVisible, setLongPressMenuVisible] = useState(false);
@@ -130,10 +129,7 @@ const { socket, userId, emitTyping } = useSocket();
   const PIN_STORAGE_KEY = (chatId: string) => `pinned:${chatId}`;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  
-  
   // -------------------------
-  
   // Presence events
   // -------------------------
   useEffect(() => {
@@ -243,136 +239,63 @@ const { socket, userId, emitTyping } = useSocket();
     }
   };
 
-// -------------------------
-// Socket: Debug connection
-// -------------------------
-useEffect(() => {
-  if (!socket) {
-    console.log("❌ [CHAT DEBUG] No socket instance");
-    return;
-  }
+  // -------------------------
+  // Socket: New messages
+  // -------------------------
+  useEffect(() => {
+    if (!socket) return;
 
-  console.log("🔌 [CHAT DEBUG] Socket status:", {
-    connected: socket.connected,
-    id: socket.id,
-    userId,
-    chatPartnerId
-  });
+    const onNew = (msg: MessageType) => {
+      const relevant =
+        (String(msg.senderId) === String(chatPartnerId) && String(msg.receiverId) === String(userId)) ||
+        (String(msg.receiverId) === String(chatPartnerId) && String(msg.senderId) === String(userId));
 
-  // Log all socket events for debugging
-  const debugAll = (eventName: string, data: any) => {
-    if (eventName === 'newMessage' || eventName === 'message' || eventName === 'chatMessage') {
-      console.log("📡 [SOCKET EVENT]", eventName, {
-        id: data?._id,
-        text: data?.text?.substring(0, 30),
-        sender: data?.senderId,
-        receiver: data?.receiverId
+      if (!relevant) return;
+
+      // Skip if this is a message we already have (including temp messages we sent)
+      if (msg._id && sentMessageIds.current.has(msg._id)) return;
+
+      setMessages((prev) => {
+        // Check for existing message by ID
+        const exists = prev.some((m) => m._id === msg._id);
+        if (exists) return prev;
+
+        // If I received this message (they sent it to me)
+        if (String(msg.receiverId) === String(userId)) {
+          const updatedMsg: MessageType = { ...msg, status: "read" };
+
+          // Notify sender that I read it
+          if (msg._id && msg.senderId) {
+            socket.emit("messageRead", { messageId: msg._id, senderId: msg.senderId });
+            api.put(`/api/messages/read/${msg._id}`).catch(() => { });
+          }
+
+          // Show notification
+          if (msg.text && String(msg.senderId) !== String(userId)) {
+            pushService
+              .showLocalNotification(`New message from ${name}`, msg.text, {
+                chatId: chatPartnerId,
+                messageId: msg._id,
+                type: "message",
+              })
+              .catch(() => { });
+          }
+          return [...prev, updatedMsg];
+        }
+
+        return [...prev, msg];
       });
-    }
-  };
 
-  // Add debug listener if socket supports onAny
-  if (socket.onAny) {
-    socket.onAny(debugAll);
-  }
+      // Multiple scroll attempts for reliability
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300);
+    };
 
-  return () => {
-    if (socket.offAny) {
-      socket.offAny(debugAll);
-    }
-  };
-}, [socket, userId, chatPartnerId]);
-// -------------------------
-// Socket: New messages - LISTEN FOR MULTIPLE EVENTS
-// -------------------------
-useEffect(() => {
-  if (!socket) {
-    console.log("❌ [CHAT] No socket available for listening");
-    return;
-  }
-
-  console.log("👂 [CHAT] Setting up socket listeners for chat with:", chatPartnerId);
-
-const onNew = (msg: MessageType) => {
-  console.log("📥 [SOCKET] Received message event:", {
-    msgId: msg._id,
-    textPreview: msg.text?.substring(0, 30),
-    senderId: msg.senderId,
-    receiverId: msg.receiverId
-  });
-
-  const sId = String((msg.senderId as any)?._id || msg.senderId);
-  const rId = String((msg.receiverId as any)?._id || msg.receiverId);
-
-  const me = String(userId);
-  const partner = String(chatPartnerId);
-
-  const relevant =
-    (sId === partner && rId === me) ||
-    (rId === partner && sId === me);
-
-  if (!relevant) {
-    console.log("❌ [SOCKET] Message not relevant for this chat");
-    return;
-  }
-
-  console.log("✅ [SOCKET] Adding relevant message to UI");
-
-  setMessages(prev => {
-    // Check if this is OUR message (sent by us)
-    const isMyMessage = sId === me;
-    
-    // If it's our own message, we might have already added it via optimistic update
-    if (isMyMessage) {
-      console.log("📱 [SOCKET] This is my own message");
-      
-      // Check if we have a temporary message that should be replaced
-      // Look for temporary ID pattern or check if we have a message with same text
-      const tempMsgIndex = prev.findIndex(m => 
-        m._id === msg._id || // Already has same ID (server response already replaced it)
-        (m.text === msg.text && m.senderId === msg.senderId && !m._id?.startsWith('temp-')) // Same content, not temp
-      );
-      
-      if (tempMsgIndex !== -1) {
-        console.log("🔄 [SOCKET] Replacing existing message at index:", tempMsgIndex);
-        const newMessages = [...prev];
-        newMessages[tempMsgIndex] = msg;
-        return newMessages;
-      }
-      
-      // Check if we already have this exact message
-      const exists = prev.some(m => m._id === msg._id);
-      if (exists) {
-        console.log("✅ [SOCKET] Message already exists in UI");
-        return prev; // Don't add duplicate
-      }
-    }
-    
-    // For incoming messages (from others) or if no match found
-    console.log("➕ [SOCKET] Adding new message to UI");
-    return [...prev, msg];
-  });
-
-  setTimeout(() => {
-    flatListRef.current?.scrollToEnd({ animated: true });
-  }, 100);
-};
-
-  // Listen for ALL possible message events
-  socket.on("newMessage", onNew);
-  socket.on("message", onNew); // Some servers use just "message"
-  socket.on("chatMessage", onNew); // Some servers use "chatMessage"
-  socket.on("message:sent", onNew); // Some servers use "message:sent"
-
-  return () => {
-    console.log("🧹 [CHAT] Cleaning up socket listeners");
-    socket.off("newMessage", onNew);
-    socket.off("message", onNew);
-    socket.off("chatMessage", onNew);
-    socket.off("message:sent", onNew);
-  };
-}, [socket, chatPartnerId, userId]);
-
+    socket.on("newMessage", onNew);
+    return () => {
+      socket.off("newMessage", onNew);
+    };
+  }, [socket, chatPartnerId, userId, name]);
 
   // -------------------------
   // Socket: Message read receipts
@@ -450,39 +373,140 @@ const onNew = (msg: MessageType) => {
     }
   }, [userId]);
 
-useEffect(() => {
-  let mounted = true;
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        // STEP 1: Load messages first (always show existing messages)
+        const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
+        const clearedAt = await AsyncStorage.getItem(`clearedAt:${chatPartnerId}`);
+        let msgs = messagesRes.data || [];
+        let clearedTime: number | null = null;
 
-  const loadMessages = async () => {
-    try {
-      setLoading(true);
+        if (clearedAt) {
+          clearedTime = new Date(clearedAt).getTime();
+          msgs = msgs.filter(
+            (m: MessageType) =>
+              m.createdAt &&
+              new Date(m.createdAt).getTime() > clearedTime!
+          );
+        }
 
-      const res = await api.get(`/api/messages/${chatPartnerId}`);
-      if (!mounted) return;
+        setMessages((prev) => {
+          const apiIds = new Set(msgs.map((m: MessageType) => m._id).filter((id: string | undefined) => id));
+          const existingNewer = prev.filter((m) => {
+            if (!m._id || apiIds.has(m._id)) return false;
+            if (clearedTime && (!m.createdAt || new Date(m.createdAt).getTime() <= clearedTime)) return false;
+            return true;
+          });
+          return [...msgs, ...existingNewer];
+        });
 
-      const msgs = res.data || [];
-      setMessages(msgs);   // 🔥 THIS LINE FIXES EVERYTHING
+        // STEP 2: Load pinned message
+        try {
+          const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
+          if (pinnedId) {
+            const found = (messagesRes.data || []).find((m: MessageType) => String(m._id) === String(pinnedId));
+            if (found) setPinnedMessage(found);
+            else {
+              await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+              setPinnedMessage(null);
+            }
+          }
+        } catch (pinErr) {
+          setPinnedMessage(null);
+        }
 
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: false });
-      }, 100);
+        // STEP 3: Check if I blocked them
+        try {
+          const blockedRes = await api.get(`/api/users/blocked`);
+          const blockedUsers = blockedRes.data || [];
+          const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
+          setIsBlocked(isBlockedLocal);
 
-    } catch (err: any) {
-      console.log("Load messages error", err);
-      setMessages([]);
-    } finally {
-      if (mounted) setLoading(false);
+          // If I didn't block them, they might have blocked me
+          // We can't check this without backend, so just assume false
+          setIsBlockedByThem(false);
+        } catch (blockError) {
+          setIsBlocked(false);
+          setIsBlockedByThem(false);
+        }
+      } catch (err: any) {
+        console.warn("load messages error", err);
+        if (mounted) {
+          // If we get 403, they might have blocked us
+          if (err.response?.status === 403) {
+            setIsBlockedByThem(true);
+            setMessages([]); // Clear messages if they blocked us
+          } else if (err.response?.status === 404) {
+            Alert.alert("Error", "Chat not found");
+          } else {
+            Alert.alert("Error", "Cannot load messages");
+          }
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 100);
+        }
+      }
+    };
+    if (chatPartnerId && userId) load();
+    return () => {
+      mounted = false;
+    };
+  }, [chatPartnerId, userId]);
+
+  useEffect(() => {
+    if (!socket) {
+      console.warn("⚠️ [SOCKET] Socket is not initialized");
+      return;
     }
-  };
 
-  if (chatPartnerId && userId) {
-    loadMessages();
-  }
+    const onConnect = () => {
+      console.log("✅ [SOCKET] Connected to server");
+    };
 
-  return () => {
-    mounted = false;
-  };
-}, [chatPartnerId, userId]);
+    const onDisconnect = (reason: string) => {
+      console.warn("❌ [SOCKET] Disconnected:", reason);
+      if (reason === 'io server disconnect') {
+        // Server disconnected, try to reconnect
+        socket.connect();
+      }
+    };
+
+    const onConnectError = (error: any) => {
+      console.error("❌ [SOCKET] Connection error:", error);
+    };
+
+    const onReconnect = (attemptNumber: number) => {
+      console.log("🔄 [SOCKET] Reconnected after", attemptNumber, "attempts");
+    };
+
+    const onReconnectAttempt = (attemptNumber: number) => {
+      console.log("🔄 [SOCKET] Reconnection attempt", attemptNumber);
+    };
+
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("connect_error", onConnectError);
+    socket.on("reconnect", onReconnect);
+    socket.on("reconnect_attempt", onReconnectAttempt);
+
+    // Log current connection status
+    console.log("📊 [SOCKET] Initial status:", {
+      connected: socket.connected,
+      id: socket.id,
+    });
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("connect_error", onConnectError);
+      socket.off("reconnect", onReconnect);
+      socket.off("reconnect_attempt", onReconnectAttempt);
+    };
+  }, [socket]);
 
 
   useEffect(() => {
@@ -572,34 +596,32 @@ useEffect(() => {
     }, 150);
   };
 
-const pushMessage = (newMsg: MessageType) => {
-  setMessages((prev) => {
-    const existsIndex = prev.findIndex((m) => m._id === newMsg._id);
-
-    // If exists, REPLACE local with server version
-    if (existsIndex !== -1) {
-      const copy = [...prev];
-      copy[existsIndex] = newMsg;
-      return copy;
+  const pushMessage = (newMsg: MessageType) => {
+    // Don't add to sentMessageIds for temporary messages
+    if (newMsg._id && !newMsg._id.startsWith('temp-')) {
+      sentMessageIds.current.add(newMsg._id);
     }
 
-    return [...prev, newMsg];
-  });
+    setMessages((prev) => {
+      const exists = prev.some((m) => m._id === newMsg._id);
+      if (exists) return prev;
+      return [...prev, newMsg];
+    });
 
-  // Auto-scroll after adding message
-  setTimeout(() => {
-    flatListRef.current?.scrollToEnd({ animated: true });
-  }, 200);
+    // Auto-scroll after adding message
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
 
-  (async () => {
-    try {
-      const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
-      if (pinnedId && newMsg._id && String(newMsg._id) === String(pinnedId)) {
-        setPinnedMessage(newMsg);
-      }
-    } catch (e) {}
-  })();
-};
+    (async () => {
+      try {
+        const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
+        if (pinnedId && newMsg._id && String(newMsg._id) === String(pinnedId)) {
+          setPinnedMessage(newMsg);
+        }
+      } catch (e) { }
+    })();
+  };
 
 
   // -------------------------
@@ -974,291 +996,329 @@ const pushMessage = (newMsg: MessageType) => {
     }
   };
 
- const handleDeleteForMe = async (msg: MessageType) => {
-  if (!msg._id) return;
+  const handleDeleteMessage = async (msg: MessageType) => {
+    if (!msg._id) return;
 
-  setLongPressMenuVisible(false);
+    const messageId = msg._id;
+    const isMine = String(msg.senderId) === String(userId);
 
-  // Optimistic UI
-  setMessages(prev => prev.filter(m => m._id !== msg._id));
+    setLongPressMenuVisible(false);
 
-  // Unpin if needed
-  if (pinnedMessage && String(pinnedMessage._id) === String(msg._id)) {
-    await savePinnedToStorage(chatPartnerId, null);
-    setPinnedMessage(null);
-  }
+    // Delete for me (immediate UI update)
+    setMessages(prev => prev.filter(m => m._id !== messageId));
 
-  try {
-    await deleteMessageForMe(msg._id);
-  } catch (e) {
-    Alert.alert("Error", "Failed to delete message");
-  }
-};
-
-
-  // Delete for everyone (only sender)
-const handleDeleteForEveryone = async (msg: MessageType) => {
-  if (!msg._id) return;
-
-  setLongPressMenuVisible(false);
-
-  try {
-    await deleteMessageForEveryone(msg._id);
-
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === msg._id
-          ? {
-              ...m,
-              isDeleted: true,
-              text: "[This message was deleted]",
-              image: null,
-              document: null,
-            }
-          : m
-      )
-    );
-  } catch (err: any) {
-    if (err.response?.status === 403) {
-      Alert.alert("Not allowed", "Only sender can delete this message");
-    } else {
-      Alert.alert("Error", "Failed to delete message");
+    // Unpin if needed
+    if (pinnedMessage && String(pinnedMessage._id) === messageId) {
+      await savePinnedToStorage(chatPartnerId, null);
+      setPinnedMessage(null);
     }
-  }
-};
 
+    try {
+      await deleteMessageForMe(messageId);
+    } catch (e) {
+      console.warn("Delete for me failed", e);
+    }
 
-// -------------------------
-// Socket: Delete + Reactions (NEW)
-// -------------------------
-useEffect(() => {
-  if (!socket) return;
+    // Delete for everyone (only sender)
+    if (isMine) {
+      try {
+        await deleteMessageForEveryone(messageId);
 
-  // Delete for everyone
-  socket.on("messageDeletedForEveryone", (data) => {
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === data.messageId
-          ? {
-              ...m,
-              text: "[This message was deleted]",
-              image: null,
-              document: null,
-              isDeleted: true,
-            }
-          : m
-      )
-    );
-  });
+        setMessages(prev =>
+          prev.map(m =>
+            m._id === messageId
+              ? {
+                ...m,
+                isDeletedForEveryone: true,
+                text: null,
+                image: null,
+                document: null,
+              }
+              : m
+          )
+        );
 
-  // Delete only for me
-  socket.on("messageDeletedForUser", (data) => {
-    setMessages(prev =>
-      prev.filter(m => m._id !== data.messageId)
-    );
-  });
-
-  // Reaction added
-  socket.on("messageReacted", (data) => {
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === data.messageId
-          ? { ...m, reactions: data.reactions }
-          : m
-      )
-    );
-  });
-
-  // Reaction removed
-  socket.on("messageReactionRemoved", (data) => {
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === data.messageId
-          ? { ...m, reactions: data.reactions }
-          : m
-      )
-    );
-  });
-
-  return () => {
-    socket.off("messageDeletedForEveryone");
-    socket.off("messageDeletedForUser");
-    socket.off("messageReacted");
-    socket.off("messageReactionRemoved");
+        emitDeleteForEveryone(messageId, chatPartnerId);
+      } catch (e) {
+        console.warn("Delete for everyone failed", e);
+      }
+    }
   };
-}, [socket]);
-
 
   // -------------------------
   // Send message
   // -------------------------
- const sendAll = async () => {
-  if (isBlocked) {
-    Alert.alert("Blocked", "You cannot send messages to this user");
-    return;
-  }
-  if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) return;
-  if (sending) return;
+  // Replace your sendAll function with this fixed version:
 
-  setSending(true);
+  const sendAll = async () => {
+    console.log("🚀 [SEND] Starting sendAll");
+    console.log("📊 [SEND] State check:", {
+      isBlocked,
+      messageText: message.trim(),
+      imagesCount: selectedImages.length,
+      docsCount: selectedDocuments.length,
+      sending,
+      userId,
+      chatPartnerId,
+      socketConnected: socket?.connected,
+    });
 
-  // OPTIMISTIC UPDATE: Create temporary message ID
-  const tempId = `temp-${Date.now()}`;
-
-  try {
-    // 1. OPTIMISTIC: Add message to UI immediately for text messages
-if (message.trim()) {
-  // Check if userId exists
-  if (!userId) {
-    console.error("❌ Cannot send message - userId is null");
-    setSending(false);
-    return;
-  }
-  
-  const tempMessage: MessageType = {
-    _id: tempId,
-    senderId: userId, // ✅ Now userId is guaranteed to be string
-    receiverId: chatPartnerId,
-    text: message.trim(),
-    status: "sent",
-    createdAt: new Date().toISOString(),
-  };
-
-      console.log("📝 [OPTIMISTIC] Adding temporary message:", tempId);
-      
-      // Add to UI immediately
-      setMessages(prev => [...prev, tempMessage]);
-      
-      // Scroll to show it
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 50);
+    if (isBlocked) {
+      Alert.alert("Blocked", "You cannot send messages to this user");
+      return;
+    }
+    if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) {
+      console.log("⚠️ [SEND] No content to send");
+      return;
+    }
+    if (sending) {
+      console.log("⚠️ [SEND] Already sending, skipping...");
+      return;
     }
 
-    const uploadImageOnly = async (img: SelectedImage): Promise<MessageType> => {
-      const form = new FormData();
-      form.append("file", {
-        uri: img.uri,
-        name: img.name || "photo.jpg",
-        type: img.type || "image/jpeg",
-      } as any);
-      const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return r.data as MessageType;
-    };
+    setSending(true);
 
-    const uploadDocumentOnly = async (doc: SelectedDocument): Promise<MessageType> => {
-      const form = new FormData();
-      form.append("file", {
-        uri: doc.uri,
-        name: doc.name,
-        type: doc.type || "application/octet-stream",
-      } as any);
-      const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return r.data as MessageType;
-    };
+    // Capture current state before clearing
+    const textToSend = message.trim();
+    const imagesToSend = [...selectedImages];
+    const docsToSend = [...selectedDocuments];
 
-    // Send text message first if exists
-    if (message.trim()) {
-      const form = new FormData();
-      form.append("text", message.trim());
+    console.log("📝 [SEND] Content to send:", {
+      text: textToSend,
+      images: imagesToSend.length,
+      docs: docsToSend.length,
+    });
 
-      if (selectedImages.length > 0) {
-        const first = selectedImages[0];
-        form.append("file", {
-          uri: first.uri,
-          name: first.name || "photo.jpg",
-          type: first.type || "image/jpeg",
-        } as any);
-      } else if (selectedDocuments.length > 0) {
-        const first = selectedDocuments[0];
-        form.append("file", {
-          uri: first.uri,
-          name: first.name,
-          type: first.type || "application/octet-stream",
-        } as any);
-      }
-
-      console.log("📤 [API] Sending message to server...");
-      const res = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      const serverMsg = res.data as MessageType;
-      console.log("✅ [API] Server response:", serverMsg._id);
-
-      // Replace temp message with server message
-      setMessages(prev => 
-        prev.map(m => m._id === tempId ? { ...serverMsg, status: "sent" } : m)
-      );
-
-      // Emit socket event - check which event your server expects
-      if (socket?.connected) {
-        console.log("📤 [SOCKET] Emitting message to server, event: sendMessage");
-        socket.emit("sendMessage", { ...serverMsg, status: "sent" });
-      } else {
-        console.log("⚠️ [SOCKET] Socket not connected, cannot emit");
-      }
-    }
-
-    // Send remaining images
-    const imageStartIndex = message.trim() && selectedImages.length > 0 ? 1 : 0;
-    for (let i = imageStartIndex; i < selectedImages.length; i++) {
-      try {
-        const imgMsg = await uploadImageOnly(selectedImages[i]);
-        const imgMsgWithStatus: MessageType = { ...imgMsg, status: "sent" };
-        pushMessage(imgMsgWithStatus);
-        socket?.emit("sendMessage", imgMsgWithStatus);
-      } catch (e) {
-        console.warn("upload image failed:", e);
-      }
-    }
-
-    // Send remaining documents
-    const docStartIndex =
-      message.trim() && selectedImages.length === 0 && selectedDocuments.length > 0 ? 1 : 0;
-    for (let i = docStartIndex; i < selectedDocuments.length; i++) {
-      try {
-        const docMsg = await uploadDocumentOnly(selectedDocuments[i]);
-        const docMsgWithStatus: MessageType = { ...docMsg, status: "sent" };
-        pushMessage(docMsgWithStatus);
-        socket?.emit("sendMessage", docMsgWithStatus);
-      } catch (e) {
-        console.warn("upload document failed:", e);
-      }
-    }
-
+    // Clear input immediately for better UX
     setMessage("");
     setSelectedImages([]);
     setSelectedDocuments([]);
-    setViewerVisible(false);
-    setViewingSentImage(false);
 
-    if (emitTyping) emitTyping(chatPartnerId, false);
+    try {
+      // Send text message
+      if (textToSend) {
+        console.log("💬 [SEND] Sending text message:", textToSend);
 
-    // Multiple scroll attempts to ensure latest message is visible
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
-    setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 400);
+        const form = new FormData();
+        form.append("text", textToSend);
 
-  } catch (err: any) {
-    console.error("❌ [API] Send failed:", err);
-    
-    // Remove optimistic update on error
-    if (message.trim()) {
-      setMessages(prev => prev.filter(m => m._id !== tempId));
+        if (imagesToSend.length > 0) {
+          const first = imagesToSend[0];
+          form.append("file", {
+            uri: first.uri,
+            name: first.name || "photo.jpg",
+            type: first.type || "image/jpeg",
+          } as any);
+          console.log("📷 [SEND] Attaching first image to text message");
+        } else if (docsToSend.length > 0) {
+          const first = docsToSend[0];
+          form.append("file", {
+            uri: first.uri,
+            name: first.name,
+            type: first.type || "application/octet-stream",
+          } as any);
+          console.log("📎 [SEND] Attaching first document to text message");
+        }
+
+        console.log("🌐 [SEND] Calling API:", `/api/messages/send/${chatPartnerId}`);
+
+        const res = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 10000, // 10 second timeout
+        });
+
+        console.log("✅ [SEND] API Response received:", res.data);
+
+        // FIXED: Backend returns { success, message, data } - we need the data object
+        const responseData = res.data.data || res.data; // Handle both formats
+
+        console.log("🔍 [SEND] Response details:", {
+          _id: responseData._id,
+          text: responseData.text,
+          senderId: responseData.senderId,
+          receiverId: responseData.receiverId,
+          createdAt: responseData.createdAt,
+          fullResponse: JSON.stringify(res.data)
+        });
+
+        const firstMsg = responseData as MessageType;
+        const msgWithStatus: MessageType = { ...firstMsg, status: "sent" };
+
+        console.log("💾 [SEND] Adding message to UI:", msgWithStatus);
+
+        // DIRECT UPDATE - Don't use pushMessage, update state directly
+        setMessages((prev) => {
+          // Check if message already exists
+          const exists = prev.some((m) => m._id === msgWithStatus._id);
+          if (exists) {
+            console.log("⚠️ [SEND] Message already exists, skipping");
+            return prev;
+          }
+          console.log("✅ [SEND] Adding new message to state");
+          return [...prev, msgWithStatus];
+        });
+
+        // Add to sentMessageIds to prevent socket duplicate
+        if (msgWithStatus._id) {
+          sentMessageIds.current.add(msgWithStatus._id);
+        }
+
+        // Scroll to bottom immediately
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300);
+
+        console.log("📡 [SEND] Emitting to socket:", {
+          socketExists: !!socket,
+          socketConnected: socket?.connected,
+          messageId: msgWithStatus._id,
+        });
+
+        if (socket && socket.connected) {
+          socket.emit("sendMessage", msgWithStatus);
+          console.log("✅ [SEND] Socket emit successful");
+        } else {
+          console.error("❌ [SEND] Socket not connected! Message won't be delivered in real-time");
+          Alert.alert("Warning", "Connection issue detected. Message saved but may not deliver immediately.");
+        }
+      }
+
+      // Send remaining images
+      const imageStartIndex = textToSend && imagesToSend.length > 0 ? 1 : 0;
+      for (let i = imageStartIndex; i < imagesToSend.length; i++) {
+        try {
+          const form = new FormData();
+          form.append("file", {
+            uri: imagesToSend[i].uri,
+            name: imagesToSend[i].name || "photo.jpg",
+            type: imagesToSend[i].type || "image/jpeg",
+          } as any);
+
+          console.log(`📷 [SEND] Uploading image ${i + 1}/${imagesToSend.length}`);
+
+          const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
+            timeout: 30000, // Add 30 second timeout
+          });
+
+          console.log(`✅ [SEND] Image ${i + 1} API response:`, r.data);
+
+          // FIXED: Backend returns { success, message, data } - extract the data
+          const responseData = r.data.data || r.data;
+
+          const imgMsg = responseData as MessageType;
+          const imgMsgWithStatus: MessageType = { ...imgMsg, status: "sent" };
+
+          // DIRECT UPDATE for images too
+          setMessages((prev) => {
+            const exists = prev.some((m) => m._id === imgMsgWithStatus._id);
+            if (exists) return prev;
+            return [...prev, imgMsgWithStatus];
+          });
+
+          if (imgMsgWithStatus._id) {
+            sentMessageIds.current.add(imgMsgWithStatus._id);
+          }
+
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
+          if (socket && socket.connected) {
+            socket.emit("sendMessage", imgMsgWithStatus);
+          }
+
+          console.log(`✅ [SEND] Image ${i + 1} uploaded successfully`);
+        } catch (e) {
+          console.error(`❌ [SEND] Image ${i + 1} upload failed:`, e);
+        }
+      }
+
+      // Send remaining documents
+      const docStartIndex = textToSend && imagesToSend.length === 0 && docsToSend.length > 0 ? 1 : 0;
+      for (let i = docStartIndex; i < docsToSend.length; i++) {
+        try {
+          console.log(`📎 [SEND] Uploading document ${i + 1}/${docsToSend.length}`);
+
+          const form = new FormData();
+          form.append("file", {
+            uri: docsToSend[i].uri,
+            name: docsToSend[i].name,
+            type: docsToSend[i].type || "application/octet-stream",
+          } as any);
+
+          const r = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+
+          // FIXED: Backend returns { success, message, data } - extract the data
+          const responseData = r.data.data || r.data;
+
+          // CRITICAL FIX: Backend stores document in 'image' field
+          const docMsg: MessageType = {
+            ...responseData,
+            document: responseData.image || responseData.document,
+            documentName: docsToSend[i].name,
+            documentType: docsToSend[i].type,
+            documentSize: docsToSend[i].size,
+            image: null, // Clear image field since this is a document
+          };
+          const docMsgWithStatus: MessageType = { ...docMsg, status: "sent" };
+
+          // DIRECT UPDATE for documents too
+          setMessages((prev) => {
+            const exists = prev.some((m) => m._id === docMsgWithStatus._id);
+            if (exists) return prev;
+            return [...prev, docMsgWithStatus];
+          });
+
+          if (docMsgWithStatus._id) {
+            sentMessageIds.current.add(docMsgWithStatus._id);
+          }
+
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+
+          if (socket && socket.connected) {
+            socket.emit("sendMessage", docMsgWithStatus);
+          }
+
+          console.log(`✅ [SEND] Document ${i + 1} uploaded successfully`);
+        } catch (e) {
+          console.error(`❌ [SEND] Document ${i + 1} upload failed:`, e);
+        }
+      }
+
+      setViewerVisible(false);
+      setViewingSentImage(false);
+
+      if (emitTyping) emitTyping(chatPartnerId, false);
+
+      // Scroll to bottom
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 400);
+
+      console.log("🎉 [SEND] All messages sent successfully");
+    } catch (err: any) {
+      console.error("❌ [SEND] Send failed with error:", {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status,
+        code: err.code,
+      });
+
+      if (err.response?.status === 404) {
+        Alert.alert("Error", "User not found or chat not available");
+      } else if (err.code === 'ECONNABORTED' || err.message.includes('timeout')) {
+        Alert.alert("Timeout", "Server is taking too long to respond. Please check your connection.");
+      } else if (err.code === 'NETWORK_ERROR' || !err.response) {
+        Alert.alert("Network Error", "Cannot connect to server. Please check if backend is running.");
+      } else {
+        Alert.alert("Error", `Failed to send: ${err.message || 'Unknown error'}`);
+      }
+    } finally {
+      setSending(false);
+      console.log("🏁 [SEND] sendAll completed");
     }
-    
-    if (err.response?.status === 404)
-      Alert.alert("Error", "User not found or chat not available");
-    else Alert.alert("Error", "Failed to send messages");
-  } finally {
-    setSending(false);
-  }
-};
+  };
+
   // -------------------------
   // Date separator helpers
   // -------------------------
@@ -1324,7 +1384,13 @@ if (message.trim()) {
       setMatchIndexes(idxs);
       setCurrentMatchIdx(0);
 
-
+      // if (idxs.length > 0) {
+      //   setTimeout(() => {
+      //     flatListRef.current?.scrollToIndex({ index: idxs[idxs.length - 1], animated: true, viewPosition: 0.5 });
+      //   }, 120);
+      // } else {
+      //   setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 120);
+      // }
     }, 300);
 
     return () => {
@@ -1533,19 +1599,17 @@ if (message.trim()) {
             isMine ? styles.myMessageWrapper : styles.theirMessageWrapper,
           ]}
         >
-<TouchableOpacity
-  activeOpacity={0.9}
-  onLongPress={() => {
-    if (item.isDeleted) return;
-    setLongPressTarget(item);
-    setLongPressMenuVisible(true);
-  }}
-  style={[
-    styles.messageBubble,
-    isMine ? styles.myBubble : styles.theirBubble,
-  ]}
->
-
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onLongPress={() => {
+              setLongPressTarget(item);
+              setLongPressMenuVisible(true);
+            }}
+            style={[
+              styles.messageBubble,
+              isMine ? styles.myBubble : styles.theirBubble,
+            ]}
+          >
             {/* IMAGE / VIDEO */}
             {fileUrl && isImageOrVideo && (
               <TouchableOpacity onPress={() => openSentImageViewer(fileUrl)}>
@@ -1617,32 +1681,29 @@ if (message.trim()) {
             )}
 
             {/* TEXT MESSAGE */}
-           {/* DELETED MESSAGE (WHATSAPP STYLE) */}
-{item.isDeleted ? (
-  <View style={{ marginBottom: 2 }}>
-    <Text
-      style={[
-        styles.deletedMessageText,
-        isMine ? styles.deletedMine : styles.deletedTheirs,
-      ]}
-    >
-      {isMine
-        ? "🚫 You deleted this message"
-        : "🚫 This message was deleted"}
-    </Text>
-  </View>
-) : (
-  item.text && (
-    <View style={{ marginBottom: 2 }}>
-      {isMine ? (
-        <Text style={styles.myMessageText}>{item.text}</Text>
-      ) : (
-        renderHighlightedText(item.text, index)
-      )}
-    </View>
-  )
-)}
-
+            {/* DELETED MESSAGE (WHATSAPP STYLE) */}
+            {item.isDeletedForEveryone ? (
+              <View style={{ marginBottom: 2 }}>
+                <Text
+                  style={[
+                    styles.deletedMessageText,
+                    isMine ? styles.deletedMine : styles.deletedTheirs,
+                  ]}
+                >
+                  🚫 This message was deleted
+                </Text>
+              </View>
+            ) : (
+              item.text && (
+                <View style={{ marginBottom: 2 }}>
+                  {isMine ? (
+                    <Text style={styles.myMessageText}>{item.text}</Text>
+                  ) : (
+                    renderHighlightedText(item.text, index)
+                  )}
+                </View>
+              )
+            )}
 
 
             {/* FOOTER: TIME + PIN + STATUS TICKS (WhatsApp style - inline with text) */}
@@ -1692,46 +1753,46 @@ if (message.trim()) {
     );
   }
 
-const handleClearChat = () => {
-  setMenuVisible(false);
+  const handleClearChat = () => {
+    setMenuVisible(false);
 
-  Alert.alert(
-    "Clear chat",
-    "This will delete all messages in this chat only for you.",
-    [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Clear",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            // Clear UI immediately
-            setMessages([]);
-            setFilteredMessages(null);
+    Alert.alert(
+      "Clear chat",
+      "This will delete all messages in this chat only for you.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              // Clear UI immediately
+              setMessages([]);
+              setFilteredMessages(null);
 
-            // Save cleared time locally
-            await AsyncStorage.setItem(
-              `clearedAt:${chatPartnerId}`,
-              new Date().toISOString()
-            );
+              // Save cleared time locally
+              await AsyncStorage.setItem(
+                `clearedAt:${chatPartnerId}`,
+                new Date().toISOString()
+              );
 
-            // Remove pinned message
-            await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
-            setPinnedMessage(null);
+              // Remove pinned message
+              await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+              setPinnedMessage(null);
 
-            // Call backend
-            await clearChatApi(chatPartnerId);
+              // Call backend
+              await clearChatApi(chatPartnerId);
 
-            Alert.alert("Chat cleared");
-          } catch (e) {
-            console.warn("Clear chat failed", e);
-            Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
-          }
+              Alert.alert("Chat cleared");
+            } catch (e) {
+              console.warn("Clear chat failed", e);
+              Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
+            }
+          },
         },
-      },
-    ]
-  );
-};
+      ]
+    );
+  };
 
 
   const handleReportUser = () => {
@@ -1985,35 +2046,73 @@ const handleClearChat = () => {
                   </TouchableOpacity>
 
                   {/* DELETE OPTIONS */}
-{longPressTarget && (
-  <>
-    <View style={{ height: 1, backgroundColor: "#eee" }} />
+                  {longPressTarget && (
+                    <>
+                      <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-    {/* DELETE FOR ME */}
-    <TouchableOpacity
-      style={{ paddingVertical: 12 }}
-      onPress={() => handleDeleteForMe(longPressTarget)}
-    >
-      <Text style={{ fontSize: 16, fontWeight: "600" }}>
-        Delete for me
-      </Text>
-    </TouchableOpacity>
+                      {/* DELETE FOR ME */}
+                      <TouchableOpacity
+                        style={{ paddingVertical: 12 }}
+                        onPress={async () => {
+                          await deleteMessageForMe(longPressTarget._id!);
 
-    <View style={{ height: 1, backgroundColor: "#eee" }} />
+                          setMessages(prev =>
+                            prev.filter(m => m._id !== longPressTarget._id)
+                          );
 
-    {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
-    {String(longPressTarget.senderId) === String(userId) && (
-      <TouchableOpacity
-        style={{ paddingVertical: 12 }}
-        onPress={() => handleDeleteForEveryone(longPressTarget)}
-      >
-        <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
-          Delete for everyone
-        </Text>
-      </TouchableOpacity>
-    )}
-  </>
-)}
+                          setLongPressMenuVisible(false);
+                        }}
+                      >
+                        <Text style={{ fontSize: 16, fontWeight: "600" }}>
+                          Delete for me
+                        </Text>
+                      </TouchableOpacity>
+
+                      {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
+                      <>
+                        <View style={{ height: 1, backgroundColor: "#eee" }} />
+
+                        <TouchableOpacity
+                          style={{ paddingVertical: 12 }}
+                          onPress={async () => {
+                            try {
+                              await deleteMessageForEveryone(longPressTarget._id!);
+
+                              setMessages(prev =>
+                                prev.map(m =>
+                                  m._id === longPressTarget._id
+                                    ? {
+                                      ...m,
+                                      isDeletedForEveryone: true,
+                                      text: null,
+                                      image: null,
+                                      document: null,
+                                    }
+                                    : m
+                                )
+                              );
+
+                              emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
+                            } catch (e: any) {
+                              Alert.alert(
+                                "Cannot delete message",
+                                "You can’t delete this message for everyone anymore."
+                              );
+                            } finally {
+                              setLongPressMenuVisible(false);
+                            }
+
+                          }}
+                        >
+                          <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
+                            Delete for everyone
+                          </Text>
+                        </TouchableOpacity>
+                      </>
+
+
+                    </>
+                  )}
 
 
                 </View>
@@ -2533,18 +2632,18 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   deletedMessageText: {
-  fontSize: 13,
-  fontStyle: "italic",
-  opacity: 0.75,
-},
+    fontSize: 13,
+    fontStyle: "italic",
+    opacity: 0.75,
+  },
 
-deletedMine: {
-  color: "rgba(255,255,255,0.85)",
-},
+  deletedMine: {
+    color: "rgba(255,255,255,0.85)",
+  },
 
-deletedTheirs: {
-  color: "#6b7280",
-},
+  deletedTheirs: {
+    color: "#6b7280",
+  },
 
 });
 
@@ -2590,10 +2689,10 @@ const viewerStyles = StyleSheet.create({
   navText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   navDisabled: { color: "#666" },
   deletedMessageText: {
-  fontSize: 13,
-  fontStyle: "italic",
-  opacity: 0.75,
-},
+    fontSize: 13,
+    fontStyle: "italic",
+    opacity: 0.75,
+  },
 });
 
 const searchModalStyles = StyleSheet.create({
