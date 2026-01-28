@@ -37,6 +37,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import Clipboard from "@react-native-clipboard/clipboard";
 import { deleteMessageForMe, deleteMessageForEveryone, } from "../utils/api";
 import { clearChatApi } from "../utils/api";
+import { Animated } from "react-native";
+
 
 
 type MessageType = {
@@ -52,6 +54,11 @@ type MessageType = {
   status?: "sent" | "delivered" | "read";
   createdAt?: string;
   isDeletedForEveryone?: boolean;
+  reactions?: {
+  userId: string;
+  emoji: string;
+}[];
+
 
 };
 
@@ -86,9 +93,20 @@ const ChatScreen: React.FC = () => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-  const { socket, userId, emitTyping, emitDeleteForEveryone } = useSocket();
+const { socket, userId, emitTyping, emitDeleteForEveryone, } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
+  const [pressLayout, setPressLayout] = useState<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} | null>(null);
+
+const scaleAnim = useRef(new Animated.Value(1)).current;
+const [isInputAtTop, setIsInputAtTop] = useState(false);
+// Add this near your other refs (around line 54)
+const textInputRef = useRef<TextInput>(null);
 
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<MessageType[]>([]);
@@ -110,6 +128,8 @@ const ChatScreen: React.FC = () => {
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [showAttachmentModal, setShowAttachmentModal] = useState(false);
+  const [reactionBarVisible, setReactionBarVisible] = useState(false);
+
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
@@ -297,6 +317,7 @@ const ChatScreen: React.FC = () => {
     };
   }, [socket, chatPartnerId, userId, name]);
 
+  
   // -------------------------
   // Socket: Message read receipts
   // -------------------------
@@ -380,7 +401,14 @@ const ChatScreen: React.FC = () => {
         // STEP 1: Load messages first (always show existing messages)
         const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
         const clearedAt = await AsyncStorage.getItem(`clearedAt:${chatPartnerId}`);
-        let msgs = messagesRes.data || [];
+let msgs = (messagesRes.data || []).map((m: any) => ({
+  ...m,
+  isDeletedForEveryone:
+    m.isDeletedForEveryone ||
+    m.isDeleted ||
+    m.deleteType === "forEveryone",
+}));
+
         let clearedTime: number | null = null;
 
         if (clearedAt) {
@@ -509,45 +537,104 @@ const ChatScreen: React.FC = () => {
   }, [socket]);
 
 
-  useEffect(() => {
-    const keyboardWillShow = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      (e) => {
-        const height = e.endCoordinates.height;
-        setKeyboardHeight(height);
-        setIsKeyboardVisible(true);
+// Replace your current useEffect for keyboard with this:
+// Replace your current keyboard useEffect with this:
+useEffect(() => {
+  const showSubscription = Keyboard.addListener(
+    Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+    (e) => {
+      const keyboardHeight = e.endCoordinates.height;
+      setKeyboardHeight(keyboardHeight);
+      setIsKeyboardVisible(true);
+      
+      // Scroll to bottom when keyboard appears
+      setTimeout(() => {
+        flatListRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  );
 
-        // Multiple scroll attempts to ensure message visibility
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 50);
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 150);
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 300);
-      }
+  const hideSubscription = Keyboard.addListener(
+    Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+    () => {
+      setKeyboardHeight(0);
+      setIsKeyboardVisible(false);
+      
+      // Move input back to bottom when keyboard closes
+      setIsInputAtTop(false);
+    }
+  );
+
+  return () => {
+    showSubscription.remove();
+    hideSubscription.remove();
+  };
+}, []);
+  //New update deleted me
+  // -------------------------
+// Socket: Delete for everyone (real-time)
+// -------------------------
+useEffect(() => {
+  if (!socket) return;
+
+const onDeletedForEveryone = (data: any) => {
+  const id = data.messageId || data._id;
+
+  setMessages(prev =>
+    prev.map(m =>
+      m._id === id
+        ? {
+            ...m,
+            isDeletedForEveryone: true,
+            text: null,
+            image: null,
+            document: null,
+          }
+        : m
+    )
+  );
+};
+
+
+  socket.on("messageDeletedForEveryone", onDeletedForEveryone);
+  return () => {
+    socket.off("messageDeletedForEveryone", onDeletedForEveryone);
+  };
+}, [socket]);
+
+// Socket: Reaction real-time
+/*
+useEffect(() => {
+  if (!socket) return;
+
+  const onReaction = (data: any) => {
+    const { messageId, userId, emoji } = data;
+
+    setMessages(prev =>
+      prev.map(m =>
+        m._id === messageId
+          ? {
+              ...m,
+              reactions: [
+                ...(m.reactions || []).filter(r => r.userId !== userId),
+                { userId, emoji },
+              ],
+            }
+          : m
+      )
     );
+  };
 
-    const keyboardWillHide = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-      () => {
-        setKeyboardHeight(0);
-        setIsKeyboardVisible(false);
+  socket.on("messageReaction", onReaction);
+  return () => {
+  socket.off("messageReaction", onReaction);
+};
 
-        // Scroll back to bottom when keyboard closes
-        setTimeout(() => {
-          flatListRef.current?.scrollToEnd({ animated: true });
-        }, 100);
-      }
-    );
+}, [socket]);
+*/
 
-    return () => {
-      keyboardWillShow.remove();
-      keyboardWillHide.remove();
-    };
-  }, []);
+
+  
 
   // useEffect(() => {
   //   const keyboardWillShow = Keyboard.addListener(
@@ -996,54 +1083,47 @@ const ChatScreen: React.FC = () => {
     }
   };
 
-  const handleDeleteMessage = async (msg: MessageType) => {
-    if (!msg._id) return;
+const handleDeleteMessage = async (msg: MessageType) => {
+  if (!msg._id) return;
 
-    const messageId = msg._id;
-    const isMine = String(msg.senderId) === String(userId);
+  const messageId = msg._id;
+  const isMine = String(msg.senderId) === String(userId);
 
-    setLongPressMenuVisible(false);
+  setLongPressMenuVisible(false);
 
-    // Delete for me (immediate UI update)
+  if (!isMine) {
+    // Only delete for me
     setMessages(prev => prev.filter(m => m._id !== messageId));
+    await deleteMessageForMe(messageId);
+    return;
+  }
 
-    // Unpin if needed
-    if (pinnedMessage && String(pinnedMessage._id) === messageId) {
-      await savePinnedToStorage(chatPartnerId, null);
-      setPinnedMessage(null);
-    }
+  // Sender → delete for everyone
+  try {
+    await deleteMessageForEveryone(messageId);
 
-    try {
-      await deleteMessageForMe(messageId);
-    } catch (e) {
-      console.warn("Delete for me failed", e);
-    }
+    setMessages(prev =>
+      prev.map(m =>
+        m._id === messageId
+          ? {
+              ...m,
+              isDeletedForEveryone: true,
+              text: null,
+              image: null,
+              document: null,
+            }
+          : m
+      )
+    );
 
-    // Delete for everyone (only sender)
-    if (isMine) {
-      try {
-        await deleteMessageForEveryone(messageId);
+    emitDeleteForEveryone(messageId, String(chatPartnerId));
 
-        setMessages(prev =>
-          prev.map(m =>
-            m._id === messageId
-              ? {
-                ...m,
-                isDeletedForEveryone: true,
-                text: null,
-                image: null,
-                document: null,
-              }
-              : m
-          )
-        );
 
-        emitDeleteForEveryone(messageId, chatPartnerId);
-      } catch (e) {
-        console.warn("Delete for everyone failed", e);
-      }
-    }
-  };
+  } catch (e) {
+    Alert.alert("Cannot delete", "Time limit exceeded");
+  }
+};
+
 
   // -------------------------
   // Send message
@@ -1526,8 +1606,16 @@ const ChatScreen: React.FC = () => {
   // -------------------------
   // RENDER MESSAGE - CRITICAL FIX FOR ALIGNMENT
   // -------------------------
-  const renderMessage = ({ item, index }: { item: MessageType; index: number }) => {
-    const currentDate = item?.createdAt ? new Date(item.createdAt) : null;
+   const renderMessage = ({ item, index }: { item: MessageType; index: number }) => {
+
+
+  const isDeleted =
+    item.isDeletedForEveryone ||
+    (item as any).isDeleted ||
+    (item as any).deleteType === "forEveryone";
+
+  const currentDate = item?.createdAt ? new Date(item.createdAt) : null;
+
 
     // ---------- DATE SEPARATOR LOGIC ----------
     let showSeparator = false;
@@ -1565,14 +1653,15 @@ const ChatScreen: React.FC = () => {
       return (
         <View style={styles.tickContainer}>
           {status === "sent" && (
-            <Text style={[styles.tickText, styles.singleTick]}>✓</Text>
-          )}
-          {status === "delivered" && (
-            <Text style={[styles.tickText, styles.doubleTick]}>✓✓</Text>
-          )}
-          {status === "read" && (
-            <Text style={[styles.tickText, styles.readTick]}>✓✓</Text>
-          )}
+  <Text style={[styles.tickText, styles.singleTick]}>✓</Text>
+)}
+{status === "delivered" && (
+  <Text style={[styles.tickText, styles.doubleTick]}>✓✓</Text>
+)}
+{status === "read" && (
+  <Text style={[styles.tickText, styles.readTick]}>✓✓</Text>
+)}
+
         </View>
       );
     };
@@ -1599,17 +1688,46 @@ const ChatScreen: React.FC = () => {
             isMine ? styles.myMessageWrapper : styles.theirMessageWrapper,
           ]}
         >
-          <TouchableOpacity
-            activeOpacity={0.9}
-            onLongPress={() => {
-              setLongPressTarget(item);
-              setLongPressMenuVisible(true);
-            }}
-            style={[
-              styles.messageBubble,
-              isMine ? styles.myBubble : styles.theirBubble,
-            ]}
-          >
+        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+  <TouchableOpacity
+    activeOpacity={0.9}
+    onPress={() => {
+      Animated.sequence([
+        Animated.timing(scaleAnim, {
+          toValue: 1.08,
+          duration: 80,
+          useNativeDriver: true,
+        }),
+        Animated.timing(scaleAnim, {
+          toValue: 1,
+          duration: 80,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }}
+    onLongPress={(e) => {
+      if (item.isDeletedForEveryone) return;
+
+      setLongPressTarget(item);
+
+      e.target.measure((x, y, width, height, pageX, pageY) => {
+        setPressLayout({
+          x: pageX,
+          y: pageY,
+          width,
+          height,
+        });
+      });
+
+      setReactionBarVisible(true);
+      setLongPressMenuVisible(true);
+    }}
+    style={[
+      styles.messageBubble,
+      isMine ? styles.myBubble : styles.theirBubble,
+    ]}
+>
+
             {/* IMAGE / VIDEO */}
             {fileUrl && isImageOrVideo && (
               <TouchableOpacity onPress={() => openSentImageViewer(fileUrl)}>
@@ -1633,6 +1751,7 @@ const ChatScreen: React.FC = () => {
                   />
                 )}
               </TouchableOpacity>
+              
             )}
 
             {/* DOCUMENT */}
@@ -1682,29 +1801,32 @@ const ChatScreen: React.FC = () => {
 
             {/* TEXT MESSAGE */}
             {/* DELETED MESSAGE (WHATSAPP STYLE) */}
-            {item.isDeletedForEveryone ? (
-              <View style={{ marginBottom: 2 }}>
-                <Text
-                  style={[
-                    styles.deletedMessageText,
-                    isMine ? styles.deletedMine : styles.deletedTheirs,
-                  ]}
-                >
-                  🚫 This message was deleted
-                </Text>
-              </View>
-            ) : (
-              item.text && (
-                <View style={{ marginBottom: 2 }}>
-                  {isMine ? (
-                    <Text style={styles.myMessageText}>{item.text}</Text>
-                  ) : (
-                    renderHighlightedText(item.text, index)
-                  )}
-                </View>
-              )
-            )}
+            
+              {/* TEXT MESSAGE */}
+{/* DELETED MESSAGE (WHATSAPP STYLE) */}
+{isDeleted ? (
+  <View style={{ marginBottom: 2 }}>
+    <Text
+      style={[
+        styles.deletedMessageText,
+        isMine ? styles.deletedMine : styles.deletedTheirs,
+      ]}
+    >
+      {isMine ? "🚫 You deleted this message" : "🚫 This message was deleted"}
 
+    </Text>
+  </View>
+) : (
+  item.text && (
+    <View style={{ marginBottom: 2 }}>
+      {isMine ? (
+        <Text style={styles.myMessageText}>{item.text}</Text>
+      ) : (
+        renderHighlightedText(item.text, index)
+      )}
+    </View>
+  )
+)}
 
             {/* FOOTER: TIME + PIN + STATUS TICKS (WhatsApp style - inline with text) */}
             <View style={styles.messageFooter}>
@@ -1737,7 +1859,35 @@ const ChatScreen: React.FC = () => {
               {renderStatusTicks()}
             </View>
           </TouchableOpacity>
-        </View>
+          
+
+{/* 👇 PASTE THIS EXACTLY HERE */}
+{item.reactions && item.reactions.length > 0 && (
+  <View
+    style={[
+      {
+        flexDirection: "row",
+        backgroundColor: "#e5e7eb",
+        borderRadius: 12,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        marginTop: 4,
+      },
+      isMine ? { alignSelf: "flex-end" } : { alignSelf: "flex-start" },
+    ]}
+  >
+    {item.reactions.map((r, i) => (
+      <Text key={i} style={{ marginRight: 4, fontSize: 12 }}>
+        {r.emoji}
+      </Text>
+    ))}
+  </View>
+)}
+
+</Animated.View>
+
+</View>
+
       </>
     );
   };
@@ -1811,23 +1961,28 @@ const ChatScreen: React.FC = () => {
         >
           <View style={styles.container}>
 
-            {/* Header */}
-            <View style={styles.header}>
-              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-                <Text style={styles.backButtonText}>←</Text>
-              </TouchableOpacity>
+            {/* Modern Header */}
+<View style={styles.header}>
+  <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+    <Text style={styles.backButtonText}>←</Text>
+  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={{ flex: 1, marginHorizontal: 8 }}
-                onPress={() => {
-                  console.log("Profile navigation disabled");
-                }}
-              >
-                <Text style={styles.headerName}>{name}</Text>
-                <Text style={styles.chatStatusSmall}>
-                  {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
-                </Text>
-              </TouchableOpacity>
+  <View style={{ flex: 1, marginHorizontal: 12 }}>
+    <Text style={styles.headerName}>{name}</Text>
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      <View style={{
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: partnerOnline ? '#4ade80' : '#9ca3af',
+        marginRight: 6,
+        marginTop: 2
+      }} />
+      <Text style={styles.chatStatusSmall}>
+        {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
+      </Text>
+    </View>
+  </View>
 
               <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.searchIconBtn}>
                 <Text style={styles.searchIcon}>⋮</Text>
@@ -1835,22 +1990,28 @@ const ChatScreen: React.FC = () => {
             </View>
 
             {pinnedMessage && (
-              <TouchableOpacity
-                style={{
-                  backgroundColor: "#f3f9f3",
-                  paddingHorizontal: 12,
-                  paddingVertical: 10,
-                  marginHorizontal: 12,
-                  marginTop: 12,
-                  borderRadius: 12,
-                  flexDirection: "row",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  borderWidth: 1,
-                  borderColor: "#d1f0d1",
-                }}
-                onPress={() => scrollToPinned()}
-              >
+  <TouchableOpacity
+    style={{
+      backgroundColor: "#f0f9ff",
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      marginHorizontal: 16,
+      marginTop: 12,
+      marginBottom: 8,
+      borderRadius: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      borderWidth: 1,
+      borderColor: "#bae6fd",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 2,
+      elevation: 1,
+    }}
+    onPress={() => scrollToPinned()}
+  >
                 <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                   <Text style={{ marginRight: 10 }}>📌</Text>
                   <View style={{ flex: 1 }}>
@@ -1867,6 +2028,53 @@ const ChatScreen: React.FC = () => {
                 </TouchableOpacity>
               </TouchableOpacity>
             )}
+
+{/* REACTION
+{reactionBarVisible && pressLayout && (
+  <View
+    style={{
+      position: "absolute",
+      top: pressLayout.y - 80,
+      left: pressLayout.x - 20,
+      backgroundColor: "#1f2937",
+      borderRadius: 30,
+      paddingVertical: 8,
+      paddingHorizontal: 14,
+      flexDirection: "row",
+      zIndex: 9999,
+    }}
+  >
+    {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(e => (
+      <TouchableOpacity
+        key={e}
+        onPress={() => {
+          const msgId = longPressTarget!._id!;
+
+          setMessages(prev =>
+            prev.map(m =>
+              m._id === msgId
+                ? {
+                    ...m,
+                    reactions: [
+                      ...(m.reactions || []).filter(r => r.userId !== userId),
+                      { userId: String(userId), emoji: e },
+                    ],
+                  }
+                : m
+            )
+          );
+
+          emitReactToMessage(msgId, e, chatPartnerId);
+          setReactionBarVisible(false);
+        }}
+      >
+        <Text style={{ fontSize: 22 }}>{e}</Text>
+      </TouchableOpacity>
+      
+    ))}
+  </View>
+)}
+*/}
 
             <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
               <TouchableOpacity style={menuStyles.overlay} activeOpacity={1} onPress={() => setMenuVisible(false)}>
@@ -1998,9 +2206,9 @@ const ChatScreen: React.FC = () => {
                 <View
                   style={{
                     position: "absolute",
-                    bottom: Platform.OS === "ios" ? 140 : 120,
-                    left: 40,
-                    right: 40,
+                    bottom: insets.bottom + 120,
+                    left: 20,
+                    right: 20,
                     backgroundColor: "#fff",
                     borderRadius: 12,
                     paddingVertical: 8,
@@ -2069,52 +2277,50 @@ const ChatScreen: React.FC = () => {
                       </TouchableOpacity>
 
                       {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
-                      <>
-                        <View style={{ height: 1, backgroundColor: "#eee" }} />
+                      {String(longPressTarget.senderId) === String(userId) && (
+  <>
+    </>
+)}
 
-                        <TouchableOpacity
-                          style={{ paddingVertical: 12 }}
-                          onPress={async () => {
-                            try {
-                              await deleteMessageForEveryone(longPressTarget._id!);
+    <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-                              setMessages(prev =>
-                                prev.map(m =>
-                                  m._id === longPressTarget._id
-                                    ? {
-                                      ...m,
-                                      isDeletedForEveryone: true,
-                                      text: null,
-                                      image: null,
-                                      document: null,
-                                    }
-                                    : m
-                                )
-                              );
+    <TouchableOpacity
+      style={{ paddingVertical: 12 }}
+      onPress={async () => {
+        try {
+          await deleteMessageForEveryone(longPressTarget._id!);
 
-                              emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
-                            } catch (e: any) {
-                              Alert.alert(
-                                "Cannot delete message",
-                                "You can’t delete this message for everyone anymore."
-                              );
-                            } finally {
-                              setLongPressMenuVisible(false);
-                            }
+          setMessages(prev =>
+            prev.map(m =>
+              m._id === longPressTarget._id
+                ? {
+                    ...m,
+                    isDeletedForEveryone: true,
+                    text: null,
+                    image: null,
+                    document: null,
+                  }
+                : m
+            )
+          );
 
-                          }}
-                        >
-                          <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
-                            Delete for everyone
-                          </Text>
-                        </TouchableOpacity>
-                      </>
-
-
-                    </>
-                  )}
-
-
+          emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
+        } catch (e) {
+          Alert.alert(
+            "Cannot delete message",
+            "You can’t delete this message for everyone anymore."
+          );
+        } finally {
+          setLongPressMenuVisible(false);
+        }
+      }}
+    >
+      <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
+        Delete for everyone
+      </Text>
+    </TouchableOpacity>
+  </>
+)}
                 </View>
               </TouchableOpacity>
             </Modal>
@@ -2265,17 +2471,32 @@ const ChatScreen: React.FC = () => {
                   </TouchableOpacity>
 
                   <TextInput
-                    placeholder="Type a message..."
-                    placeholderTextColor="#9ca3af"
-                    style={styles.input}
-                    value={message}
-                    onChangeText={(t) => {
-                      setMessage(t);
-                      if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
-                    }}
-                    multiline
-                    editable={!sending}
-                  />
+  ref={textInputRef}
+  placeholder="Type a message..."
+  placeholderTextColor="#9ca3af"
+  style={styles.input}
+  value={message}
+  onChangeText={(t) => {
+    setMessage(t);
+    if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
+  }}
+  multiline
+  editable={!sending}
+  onFocus={() => {
+    // Move input to top when focused
+    setIsInputAtTop(true);
+    // Scroll to bottom when typing starts
+    setTimeout(() => {
+      flatListRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }}
+  onBlur={() => {
+    // Only move back to bottom if there's no content
+    if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) {
+      setIsInputAtTop(false);
+    }
+  }}
+/>
 
                   <TouchableOpacity
                     style={[styles.sendButton, sending && styles.sendButtonDisabled]}
@@ -2373,9 +2594,17 @@ const ChatScreen: React.FC = () => {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
+     
+
+
+      
     </View>
+    
+    
   );
+  
 };
+
 
 const styles = StyleSheet.create({
   container: {
@@ -2388,21 +2617,21 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 16, fontWeight: "600", color: "#6b7280", marginBottom: 6 },
   emptySubtext: { fontSize: 13, color: "#9ca3af", textAlign: "center" },
   header: {
-    backgroundColor: COLORS.primary,
-    paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight || 35, // RESET TO ORIGINAL
-    paddingBottom: 10, // RESET TO ORIGINAL
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    elevation: 6,
-  },
+  backgroundColor: COLORS.primary,
+  paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight || 35,
+  paddingBottom: 15, // CHANGED: from 10 to 15
+  paddingHorizontal: 16, // CHANGED: from 12 to 16
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+  borderBottomLeftRadius: 20,
+  borderBottomRightRadius: 20,
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: 3 },
+  shadowOpacity: 0.15, // CHANGED: from 0.12 to 0.15
+  shadowRadius: 10, // CHANGED: from 8 to 10
+  elevation: 8, // CHANGED: from 6 to 8
+},
   backButton: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   backButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   headerName: { color: "#fff", fontSize: 16, fontWeight: "700", textAlign: "left" },
@@ -2422,17 +2651,17 @@ const styles = StyleSheet.create({
   myBubble: { backgroundColor: COLORS.primary, borderBottomRightRadius: 4 },
   theirBubble: { backgroundColor: "#fff", borderBottomLeftRadius: 4, borderWidth: 1, borderColor: "#e5e7eb" },
   myMessageText: {
-    color: "#fff",
-    fontSize: 14,
-    lineHeight: 19,
-    paddingBottom: 2,
-  },
-  theirMessageText: {
-    color: "#1f2937",
-    fontSize: 14,
-    lineHeight: 19,
-    paddingBottom: 2,
-  },
+  color: "#fff",
+  fontSize: 15, // CHANGED: from 14 to 15
+  lineHeight: 20, // CHANGED: from 19 to 20
+  paddingBottom: 2,
+},
+theirMessageText: {
+  color: "#1f2937",
+  fontSize: 15, // CHANGED: from 14 to 15
+  lineHeight: 20, // CHANGED: from 19 to 20
+  paddingBottom: 2,
+},
   messageImage: { width: 180, height: 180, borderRadius: 10, marginBottom: 6 },
   messageDocIcon: { fontSize: 28, marginRight: 10 },
   messageDocInfo: { flex: 1 },
@@ -2475,23 +2704,34 @@ const styles = StyleSheet.create({
     color: "#4FC3F7",
   },
   inputContainer: {
-    flexDirection: "row",
-    paddingHorizontal: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderColor: "#e5e7eb",
-    alignItems: "flex-end",
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 5,
-  },
+  flexDirection: "row",
+  paddingHorizontal: 16, // CHANGED: from 12 to 16
+  paddingTop: 12,
+  paddingBottom: 14, // ADDED: extra bottom padding
+  borderTopWidth: 1,
+  borderColor: "#e5e7eb",
+  alignItems: "flex-end",
+  backgroundColor: "#fff",
+  shadowColor: "#000",
+  shadowOffset: { width: 0, height: -2 }, // CHANGED: from -1 to -2
+  shadowOpacity: 0.1, // CHANGED: from 0.08 to 0.1
+  shadowRadius: 8, // CHANGED: from 6 to 8
+  elevation: 5,
+},
   mediaButton: { padding: 6, marginRight: 6, backgroundColor: "#f3f4f6", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   mediaButtonText: { fontSize: 16 },
-  input: { flex: 1, backgroundColor: "#f9fafb", borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, marginHorizontal: 6, fontSize: 15, maxHeight: 90, borderWidth: 1, borderColor: "#e5e7eb" },
-  sendButton: { backgroundColor: COLORS.primary, width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 6, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 2 },
+input: { 
+  flex: 1, 
+  backgroundColor: "#f9fafb", 
+  borderRadius: 22, // CHANGED: from 18 to 22
+  paddingHorizontal: 16, // CHANGED: from 14 to 16
+  paddingVertical: 12, // CHANGED: from 10 to 12
+  marginHorizontal: 6, 
+  fontSize: 16, // CHANGED: from 15 to 16
+  maxHeight: 90, 
+  borderWidth: 1, 
+  borderColor: "#e5e7eb" 
+},  sendButton: { backgroundColor: COLORS.primary, width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 6, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 2 },
   sendButtonDisabled: { opacity: 0.6 },
   sendText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   selectedBar: { flexDirection: "row", alignItems: "center", padding: 12, borderTopWidth: 1, borderColor: "#e5e7eb", backgroundColor: "#f9fafb" },
@@ -2521,8 +2761,17 @@ const styles = StyleSheet.create({
   blockConfirmButton: { backgroundColor: "#ef4444" },
   blockConfirmText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   dateSeparatorWrap: { alignItems: "center", marginVertical: 6 },
-  dateSeparator: { backgroundColor: "rgba(0,0,0,0.06)", paddingVertical: 4, paddingHorizontal: 10, borderRadius: 14 },
-  dateSeparatorText: { color: "#374151", fontSize: 11, fontWeight: "600" },
+  dateSeparator: { 
+  backgroundColor: "rgba(0,0,0,0.08)", // CHANGED: from 0.06 to 0.08
+  paddingVertical: 6, // CHANGED: from 4 to 6
+  paddingHorizontal: 12, // CHANGED: from 10 to 12
+  borderRadius: 16 // CHANGED: from 14 to 16
+},
+dateSeparatorText: { 
+  color: "#374151", 
+  fontSize: 12, // CHANGED: from 11 to 12
+  fontWeight: "600" 
+},
   videoOverlay: { justifyContent: "center", alignItems: "center", backgroundColor: "#000" },
   playIcon: { fontSize: 36, color: "rgba(255,255,255,0.9)", position: "absolute" },
   messageDocumentContainer: {

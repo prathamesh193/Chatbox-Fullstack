@@ -9,14 +9,19 @@ export const api = axios.create({
 });
 // Delete message for me
 export const deleteMessageForMe = (messageId: string) => {
-  return api.delete(`/api/messages/${messageId}/for-me`);
+  return api.delete(`/api/messages/delete-for-me/${messageId}`);
 };
 
 // Delete message for everyone
 export const deleteMessageForEveryone = (messageId: string) => {
-  return api.delete(`/api/messages/${messageId}/for-everyone`);
+  return api.delete(`/api/messages/delete-for-everyone/${messageId}`);
 };
 
+//reactions
+export const reactToMessage = (messageId: string, emoji: string) =>
+  api.post("/api/messages/react", { messageId, emoji });
+
+//clear chat
 export const clearChatApi = (otherUserId: string) => {
   return api.delete(`/api/messages/clear-chat/${otherUserId}`);
 };

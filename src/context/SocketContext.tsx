@@ -10,6 +10,8 @@ interface ISocketContext {
   emitMessageRead: (messageId: string, senderId: string) => void;
   emitReadAllMessages: (chatPartnerId: string) => void;
   emitDeleteForEveryone: (messageId: string, toUserId: string) => void;
+  emitReactToMessage: (messageId: string, emoji: string, toUserId: string) => void;
+
 }
 
 const SocketContext = createContext<ISocketContext>({
@@ -19,6 +21,8 @@ const SocketContext = createContext<ISocketContext>({
   emitMessageRead: () => {},
   emitReadAllMessages: () => {},
   emitDeleteForEveryone: () => {},
+  emitReactToMessage: () => {},
+
 });
 
 export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
@@ -160,6 +164,22 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, []);
 
+const emitReactToMessage = (
+  messageId: string,
+  emoji: string,
+  toUserId: string
+) => {
+  if (!socket || !socket.connected) return;
+
+  socket.emit("reactMessage", {
+    messageId,
+    emoji,
+    to: toUserId,
+  });
+};
+
+
+  
   // typing helper
   const emitTyping = (toUserId: string, isTyping: boolean) => {
     if (!socket || !socket.connected) {
@@ -195,13 +215,13 @@ const emitDeleteForEveryone = (messageId: string, toUserId: string) => {
   }
 
   socket.emit("deleteMessageForEveryone", {
-    messageId,
-    to: toUserId,
-  });
+  messageId,
+  deleteType: "forEveryone",
+  to: toUserId,
+});
 };
 
-
-  return (
+    return (
     <SocketContext.Provider value={{ 
       socket, 
       userId, 
@@ -209,10 +229,11 @@ const emitDeleteForEveryone = (messageId: string, toUserId: string) => {
       emitMessageRead,
       emitReadAllMessages,
       emitDeleteForEveryone,
+      emitReactToMessage,
+
     }}>
       {children}
     </SocketContext.Provider>
   );
 };
-
 export const useSocket = () => useContext(SocketContext);
