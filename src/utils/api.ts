@@ -2,11 +2,11 @@ import axios from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ENV } from "./env";
 
-// CRITICAL: baseURL should be JUST the base URL, NOT including /api
 export const api = axios.create({
-  baseURL: ENV.API_URL,  // This should be: http://139.59.87.161:3000
+  baseURL: ENV.API_URL,  // http://139.59.87.161:3000
   timeout: 30000,
 });
+
 // Delete message for me
 export const deleteMessageForMe = (messageId: string) => {
   return api.delete(`/api/messages/delete-for-me/${messageId}`);
@@ -17,15 +17,10 @@ export const deleteMessageForEveryone = (messageId: string) => {
   return api.delete(`/api/messages/delete-for-everyone/${messageId}`);
 };
 
-//reactions
-export const reactToMessage = (messageId: string, emoji: string) =>
-  api.post("/api/messages/react", { messageId, emoji });
-
 //clear chat
 export const clearChatApi = (otherUserId: string) => {
   return api.delete(`/api/messages/clear-chat/${otherUserId}`);
 };
-
 
 // Add auth token
 api.interceptors.request.use(async (config) => {

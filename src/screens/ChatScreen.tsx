@@ -18,7 +18,7 @@ import {
   LayoutAnimation,
   UIManager,
   Keyboard,
-  KeyboardAvoidingView,  // <-- ADD THIS
+  KeyboardAvoidingView,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import SystemNavigationBar from 'react-native-system-navigation-bar';
@@ -40,6 +40,20 @@ import { clearChatApi } from "../utils/api";
 import { Animated } from "react-native";
 
 
+const normalizeDeleted = (m: any) => {
+  const isDeleted =
+    m?.isDeletedForEveryone ||
+    m?.isDeleted ||
+    m?.deleteType === "forEveryone";
+
+  return {
+    ...m,
+    isDeletedForEveryone: isDeleted,
+    text: isDeleted ? null : m.text,
+    image: isDeleted ? null : m.image,
+    document: isDeleted ? null : m.document,
+  };
+};
 
 type MessageType = {
   _id?: string;
@@ -55,9 +69,9 @@ type MessageType = {
   createdAt?: string;
   isDeletedForEveryone?: boolean;
   reactions?: {
-  userId: string;
-  emoji: string;
-}[];
+    userId: string;
+    emoji: string;
+  }[];
 
 
 };
@@ -88,25 +102,23 @@ const ChatScreen: React.FC = () => {
   const navigation = useNavigation<any>();
   const { userId: chatPartnerId, name } = route.params || {};
 
-  // Hide navigation header
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
 
-const { socket, userId, emitTyping, emitDeleteForEveryone, } = useSocket();
+  const { socket, userId, emitTyping, emitDeleteForEveryone, } = useSocket();
   const insets = useSafeAreaInsets();
   const flatListRef = useRef<FlatList<MessageType> | null>(null);
   const [pressLayout, setPressLayout] = useState<{
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-} | null>(null);
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
 
-const scaleAnim = useRef(new Animated.Value(1)).current;
-const [isInputAtTop, setIsInputAtTop] = useState(false);
-// Add this near your other refs (around line 54)
-const textInputRef = useRef<TextInput>(null);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const [isInputAtTop, setIsInputAtTop] = useState(false);
+  const textInputRef = useRef<TextInput>(null);
 
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<MessageType[]>([]);
@@ -149,9 +161,7 @@ const textInputRef = useRef<TextInput>(null);
   const PIN_STORAGE_KEY = (chatId: string) => `pinned:${chatId}`;
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  // -------------------------
-  // Presence events
-  // -------------------------
+
   useEffect(() => {
     if (!socket || !chatPartnerId) return;
 
@@ -182,9 +192,7 @@ const textInputRef = useRef<TextInput>(null);
     };
   }, [socket, chatPartnerId]);
 
-  // -------------------------
   // Mark messages as read when opening chat
-  // -------------------------
   useEffect(() => {
     if (!socket || !userId || !chatPartnerId) return;
 
@@ -217,16 +225,13 @@ const textInputRef = useRef<TextInput>(null);
     });
   }, [socket, userId, chatPartnerId, messages.length]);
 
-  // -------------------------
   // Block/Unblock handlers
-  // -------------------------
   const handleBlockUser = async () => {
     try {
       setBlockLoading(true);
       const response = await api.post(`/api/users/block/${chatPartnerId}`);
       if (response.status === 200) {
         setIsBlocked(true);
-        // Don't clear messages - keep them visible
         setShowBlockModal(false);
         Alert.alert("Blocked", "You blocked this contact");
       } else throw new Error("Block failed");
@@ -259,9 +264,7 @@ const textInputRef = useRef<TextInput>(null);
     }
   };
 
-  // -------------------------
   // Socket: New messages
-  // -------------------------
   useEffect(() => {
     if (!socket) return;
 
@@ -272,25 +275,20 @@ const textInputRef = useRef<TextInput>(null);
 
       if (!relevant) return;
 
-      // Skip if this is a message we already have (including temp messages we sent)
       if (msg._id && sentMessageIds.current.has(msg._id)) return;
 
       setMessages((prev) => {
-        // Check for existing message by ID
         const exists = prev.some((m) => m._id === msg._id);
         if (exists) return prev;
 
-        // If I received this message (they sent it to me)
         if (String(msg.receiverId) === String(userId)) {
-          const updatedMsg: MessageType = { ...msg, status: "read" };
+          const updatedMsg: MessageType = normalizeDeleted({ ...msg, status: "read" });
 
-          // Notify sender that I read it
           if (msg._id && msg.senderId) {
             socket.emit("messageRead", { messageId: msg._id, senderId: msg.senderId });
             api.put(`/api/messages/read/${msg._id}`).catch(() => { });
           }
 
-          // Show notification
           if (msg.text && String(msg.senderId) !== String(userId)) {
             pushService
               .showLocalNotification(`New message from ${name}`, msg.text, {
@@ -303,10 +301,10 @@ const textInputRef = useRef<TextInput>(null);
           return [...prev, updatedMsg];
         }
 
-        return [...prev, msg];
+        const fixed = normalizeDeleted(msg);
+        return [...prev, fixed];
       });
 
-      // Multiple scroll attempts for reliability
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 300);
     };
@@ -317,10 +315,7 @@ const textInputRef = useRef<TextInput>(null);
     };
   }, [socket, chatPartnerId, userId, name]);
 
-  
-  // -------------------------
   // Socket: Message read receipts
-  // -------------------------
   useEffect(() => {
     if (!socket) return;
 
@@ -351,14 +346,11 @@ const textInputRef = useRef<TextInput>(null);
   }, [socket, userId]);
 
 
-  // -------------------------
   // Socket: Typing indicators
-  // -------------------------
   useEffect(() => {
     if (!socket) return;
 
     const onTyping = ({ from }: any) => {
-      // ONLY show typing if the OTHER person (chatPartner) is typing
       if (String(from) === String(chatPartnerId)) {
         setPartnerTyping(true);
       }
@@ -380,10 +372,8 @@ const textInputRef = useRef<TextInput>(null);
   }, [socket, chatPartnerId]);
 
   useEffect(() => {
-    // Force refresh when userId changes (account switch)
     if (userId) {
       console.log("User changed, refreshing view for userId:", userId);
-      // Clear any cached state
       setMessages([]);
       setFilteredMessages(null);
       setPinnedMessage(null);
@@ -398,43 +388,17 @@ const textInputRef = useRef<TextInput>(null);
     let mounted = true;
     const load = async () => {
       try {
-        // STEP 1: Load messages first (always show existing messages)
         const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
-        const clearedAt = await AsyncStorage.getItem(`clearedAt:${chatPartnerId}`);
-let msgs = (messagesRes.data || []).map((m: any) => ({
-  ...m,
-  isDeletedForEveryone:
-    m.isDeletedForEveryone ||
-    m.isDeleted ||
-    m.deleteType === "forEveryone",
-}));
 
-        let clearedTime: number | null = null;
+        const msgs = (messagesRes.data || []).map(normalizeDeleted);
+        setMessages(msgs);
 
-        if (clearedAt) {
-          clearedTime = new Date(clearedAt).getTime();
-          msgs = msgs.filter(
-            (m: MessageType) =>
-              m.createdAt &&
-              new Date(m.createdAt).getTime() > clearedTime!
-          );
-        }
-
-        setMessages((prev) => {
-          const apiIds = new Set(msgs.map((m: MessageType) => m._id).filter((id: string | undefined) => id));
-          const existingNewer = prev.filter((m) => {
-            if (!m._id || apiIds.has(m._id)) return false;
-            if (clearedTime && (!m.createdAt || new Date(m.createdAt).getTime() <= clearedTime)) return false;
-            return true;
-          });
-          return [...msgs, ...existingNewer];
-        });
-
-        // STEP 2: Load pinned message
         try {
           const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
           if (pinnedId) {
-            const found = (messagesRes.data || []).find((m: MessageType) => String(m._id) === String(pinnedId));
+            const found = msgs.find((m: MessageType) =>
+              String(m._id) === String(pinnedId)
+            );
             if (found) setPinnedMessage(found);
             else {
               await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
@@ -445,15 +409,12 @@ let msgs = (messagesRes.data || []).map((m: any) => ({
           setPinnedMessage(null);
         }
 
-        // STEP 3: Check if I blocked them
         try {
           const blockedRes = await api.get(`/api/users/blocked`);
           const blockedUsers = blockedRes.data || [];
           const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
           setIsBlocked(isBlockedLocal);
 
-          // If I didn't block them, they might have blocked me
-          // We can't check this without backend, so just assume false
           setIsBlockedByThem(false);
         } catch (blockError) {
           setIsBlocked(false);
@@ -462,10 +423,9 @@ let msgs = (messagesRes.data || []).map((m: any) => ({
       } catch (err: any) {
         console.warn("load messages error", err);
         if (mounted) {
-          // If we get 403, they might have blocked us
           if (err.response?.status === 403) {
             setIsBlockedByThem(true);
-            setMessages([]); // Clear messages if they blocked us
+            setMessages([]); 
           } else if (err.response?.status === 404) {
             Alert.alert("Error", "Chat not found");
           } else {
@@ -475,7 +435,9 @@ let msgs = (messagesRes.data || []).map((m: any) => ({
       } finally {
         if (mounted) {
           setLoading(false);
-          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 100);
+          requestAnimationFrame(() => {
+            flatListRef.current?.scrollToEnd({ animated: false });
+          });
         }
       }
     };
@@ -536,147 +498,62 @@ let msgs = (messagesRes.data || []).map((m: any) => ({
     };
   }, [socket]);
 
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        const keyboardHeight = e.endCoordinates.height;
+        setKeyboardHeight(keyboardHeight);
+        setIsKeyboardVisible(true);
 
-// Replace your current useEffect for keyboard with this:
-// Replace your current keyboard useEffect with this:
-useEffect(() => {
-  const showSubscription = Keyboard.addListener(
-    Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-    (e) => {
-      const keyboardHeight = e.endCoordinates.height;
-      setKeyboardHeight(keyboardHeight);
-      setIsKeyboardVisible(true);
-      
-      // Scroll to bottom when keyboard appears
-      setTimeout(() => {
-        flatListRef.current?.scrollToEnd({ animated: true });
-      }, 100);
-    }
-  );
-
-  const hideSubscription = Keyboard.addListener(
-    Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-    () => {
-      setKeyboardHeight(0);
-      setIsKeyboardVisible(false);
-      
-      // Move input back to bottom when keyboard closes
-      setIsInputAtTop(false);
-    }
-  );
-
-  return () => {
-    showSubscription.remove();
-    hideSubscription.remove();
-  };
-}, []);
-  //New update deleted me
-  // -------------------------
-// Socket: Delete for everyone (real-time)
-// -------------------------
-useEffect(() => {
-  if (!socket) return;
-
-const onDeletedForEveryone = (data: any) => {
-  const id = data.messageId || data._id;
-
-  setMessages(prev =>
-    prev.map(m =>
-      m._id === id
-        ? {
-            ...m,
-            isDeletedForEveryone: true,
-            text: null,
-            image: null,
-            document: null,
-          }
-        : m
-    )
-  );
-};
-
-
-  socket.on("messageDeletedForEveryone", onDeletedForEveryone);
-  return () => {
-    socket.off("messageDeletedForEveryone", onDeletedForEveryone);
-  };
-}, [socket]);
-
-// Socket: Reaction real-time
-/*
-useEffect(() => {
-  if (!socket) return;
-
-  const onReaction = (data: any) => {
-    const { messageId, userId, emoji } = data;
-
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === messageId
-          ? {
-              ...m,
-              reactions: [
-                ...(m.reactions || []).filter(r => r.userId !== userId),
-                { userId, emoji },
-              ],
-            }
-          : m
-      )
+        // Scroll to bottom when keyboard appears
+        setTimeout(() => {
+          flatListRef.current?.scrollToEnd({ animated: true });
+        }, 100);
+      }
     );
-  };
 
-  socket.on("messageReaction", onReaction);
-  return () => {
-  socket.off("messageReaction", onReaction);
-};
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+        setIsKeyboardVisible(false);
 
-}, [socket]);
-*/
+        setIsInputAtTop(false);
+      }
+    );
 
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
+
+  // Socket: Delete for everyone (real-time)
+  useEffect(() => {
+    if (!socket) return;
+
+    const onDeletedForEveryone = (data: any) => {
+      const id = data.messageId || data._id;
+
+      setMessages(prev =>
+        prev.map(m =>
+          m._id === id
+            ? normalizeDeleted({ ...m, isDeletedForEveryone: true })
+            : m
+        )
+      );
+    };
+
+
+    socket.on("messageDeletedForEveryone", onDeletedForEveryone);
+    return () => {
+      socket.off("messageDeletedForEveryone", onDeletedForEveryone);
+    };
+  }, [socket]);
 
   
-
-  // useEffect(() => {
-  //   const keyboardWillShow = Keyboard.addListener(
-  //     Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-  //     (e) => {
-  //       const keyboardHeight = e.endCoordinates.height;
-  //       setKeyboardHeight(keyboardHeight);
-  //       setIsKeyboardVisible(true);
-  //     }
-  //   );
-
-  //   const keyboardWillHide = Keyboard.addListener(
-  //     Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
-  //     () => {
-  //       setKeyboardHeight(0);
-  //       setIsKeyboardVisible(false);
-  //     }
-  //   );
-
-  //   return () => {
-  //     keyboardWillShow.remove();
-  //     keyboardWillHide.remove();
-  //   };
-  // }, []);
-
-  // Auto-scroll to bottom when keyboard closes
-  // useEffect(() => {
-  //   if (!isKeyboardVisible && messages.length > 0) {
-  //     // Small delay to ensure layout has updated
-  //     setTimeout(() => {
-  //       flatListRef.current?.scrollToEnd({ animated: true });
-  //     }, 100);
-  //   }
-  // }, [isKeyboardVisible, messages.length]);
-
-  // -------------------------
-  // REMOVED: Auto status updater (was causing premature read status)
-  // -------------------------
-
-  // -------------------------
   // Helper functions
-  // -------------------------
   const scrollToBottom = () => {
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
@@ -710,10 +587,7 @@ useEffect(() => {
     })();
   };
 
-
-  // -------------------------
   // Document Picker
-  // -------------------------
   const pickDocuments = async () => {
     if (isBlocked) {
       Alert.alert("Blocked", "You cannot send messages to this user");
@@ -747,9 +621,7 @@ useEffect(() => {
     }
   };
 
-  // -------------------------
   // Image picker
-  // -------------------------
   const pickImages = () => {
     if (isBlocked) {
       Alert.alert("Blocked", "You cannot send messages to this user");
@@ -758,10 +630,10 @@ useEffect(() => {
 
     launchImageLibrary(
       {
-        mediaType: "mixed",  // This allows both photos and videos
+        mediaType: "mixed",  
         selectionLimit: MAX_IMAGES,
         includeBase64: false,
-        videoQuality: 'high', // Add video quality
+        videoQuality: 'high', 
       },
       (res: any) => {
         if (!res || res.didCancel) return;
@@ -789,7 +661,6 @@ useEffect(() => {
     );
   };
 
-  // Add helper function to check if file is video
   const isVideoFile = (uri: string, type?: string) => {
     if (type && type.startsWith('video/')) return true;
     const lower = uri.toLowerCase();
@@ -865,15 +736,12 @@ useEffect(() => {
   const normalizeFileUrl = (url: string | null | undefined): string | null => {
     if (!url) return null;
 
-    // Replace localhost with server IP
     let processedUrl = url.replace(/localhost:3000/g, '139.59.87.161:3000');
 
-    // If already a full URL, return it
     if (processedUrl.startsWith('http://') || processedUrl.startsWith('https://')) {
       return processedUrl;
     }
 
-    // Handle relative paths
     if (processedUrl.startsWith('/uploads')) {
       return `${ENV.API_URL}${processedUrl}`;
     }
@@ -886,16 +754,13 @@ useEffect(() => {
     try {
       console.log("📥 [DOWNLOAD] Attempting download from:", url);
 
-      // Validate URL
       if (!url.startsWith('http')) {
         Alert.alert("Error", "Invalid document URL");
         return;
       }
 
-      // Determine file extension and mime type
       const extension = filename.split('.').pop()?.toLowerCase() || 'file';
 
-      // Map extensions to mime types
       const mimeTypes: { [key: string]: string } = {
         'pdf': 'application/pdf',
         'doc': 'application/msword',
@@ -915,17 +780,14 @@ useEffect(() => {
 
       const mimeType = mimeTypes[extension] || 'application/octet-stream';
 
-      // Generate a safe filename with proper extension
       const safeFilename = `downloaded_${Date.now()}.${extension}`;
       const localPath = `${RNFS.DocumentDirectoryPath}/${safeFilename}`;
 
-      // Delete existing file if it exists
       const exists = await RNFS.exists(localPath);
       if (exists) {
         await RNFS.unlink(localPath).catch(() => { });
       }
 
-      // Download the file
       const options = {
         fromUrl: url,
         toFile: localPath,
@@ -941,16 +803,13 @@ useEffect(() => {
       console.log("✅ Download complete, opening file...");
 
       try {
-        // Try to open with FileViewer
         await FileViewer.open(localPath, {});
       } catch (fileViewerError: any) {
         console.error("FileViewer error:", fileViewerError);
 
-        // If FileViewer fails, try using Linking API
         if (Platform.OS === 'android') {
           const { Linking } = require('react-native');
 
-          // For Android, convert file path to file:// URI
           const fileUri = `file://${localPath}`;
 
           try {
@@ -958,7 +817,6 @@ useEffect(() => {
             if (canOpen) {
               await Linking.openURL(fileUri);
             } else {
-              // Show options to user
               Alert.alert(
                 "File Downloaded",
                 `The file has been saved to:\n${localPath}\n\nYou may need to install a PDF viewer app from the Play Store.`,
@@ -1015,9 +873,7 @@ useEffect(() => {
     }
   };
 
-  // -------------------------
   // PIN helpers
-  // -------------------------
   const savePinnedToStorage = async (chatId: string, messageId: string | null) => {
     try {
       if (!messageId) {
@@ -1083,53 +939,38 @@ useEffect(() => {
     }
   };
 
-const handleDeleteMessage = async (msg: MessageType) => {
-  if (!msg._id) return;
+  const handleDeleteMessage = async (msg: MessageType) => {
+    if (!msg._id) return;
 
-  const messageId = msg._id;
-  const isMine = String(msg.senderId) === String(userId);
+    const messageId = msg._id;
+    const isMine = String(msg.senderId) === String(userId);
 
-  setLongPressMenuVisible(false);
+    setLongPressMenuVisible(false);
 
-  if (!isMine) {
-    // Only delete for me
-    setMessages(prev => prev.filter(m => m._id !== messageId));
-    await deleteMessageForMe(messageId);
-    return;
-  }
+    if (!isMine) {
+      setMessages(prev => prev.filter(m => m._id !== messageId));
+      await deleteMessageForMe(messageId);
+      return;
+    }
+    try {
+      await deleteMessageForEveryone(messageId);
 
-  // Sender → delete for everyone
-  try {
-    await deleteMessageForEveryone(messageId);
+      setMessages(prev =>
+        prev.map(m =>
+          m._id === messageId
+            ? normalizeDeleted({ ...m, isDeletedForEveryone: true })
+            : m
+        )
+      );
+      emitDeleteForEveryone(messageId, String(chatPartnerId));
 
-    setMessages(prev =>
-      prev.map(m =>
-        m._id === messageId
-          ? {
-              ...m,
-              isDeletedForEveryone: true,
-              text: null,
-              image: null,
-              document: null,
-            }
-          : m
-      )
-    );
-
-    emitDeleteForEveryone(messageId, String(chatPartnerId));
+    } catch (e) {
+      Alert.alert("Cannot delete", "Time limit exceeded");
+    }
+  };
 
 
-  } catch (e) {
-    Alert.alert("Cannot delete", "Time limit exceeded");
-  }
-};
-
-
-  // -------------------------
   // Send message
-  // -------------------------
-  // Replace your sendAll function with this fixed version:
-
   const sendAll = async () => {
     console.log("🚀 [SEND] Starting sendAll");
     console.log("📊 [SEND] State check:", {
@@ -1158,7 +999,6 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
     setSending(true);
 
-    // Capture current state before clearing
     const textToSend = message.trim();
     const imagesToSend = [...selectedImages];
     const docsToSend = [...selectedDocuments];
@@ -1169,13 +1009,11 @@ const handleDeleteMessage = async (msg: MessageType) => {
       docs: docsToSend.length,
     });
 
-    // Clear input immediately for better UX
     setMessage("");
     setSelectedImages([]);
     setSelectedDocuments([]);
 
     try {
-      // Send text message
       if (textToSend) {
         console.log("💬 [SEND] Sending text message:", textToSend);
 
@@ -1204,13 +1042,12 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
         const res = await api.post(`/api/messages/send/${chatPartnerId}`, form, {
           headers: { "Content-Type": "multipart/form-data" },
-          timeout: 10000, // 10 second timeout
+          timeout: 10000,
         });
 
         console.log("✅ [SEND] API Response received:", res.data);
 
-        // FIXED: Backend returns { success, message, data } - we need the data object
-        const responseData = res.data.data || res.data; // Handle both formats
+        const responseData = res.data.data || res.data; 
 
         console.log("🔍 [SEND] Response details:", {
           _id: responseData._id,
@@ -1328,21 +1165,18 @@ const handleDeleteMessage = async (msg: MessageType) => {
             headers: { "Content-Type": "multipart/form-data" },
           });
 
-          // FIXED: Backend returns { success, message, data } - extract the data
           const responseData = r.data.data || r.data;
 
-          // CRITICAL FIX: Backend stores document in 'image' field
           const docMsg: MessageType = {
             ...responseData,
             document: responseData.image || responseData.document,
             documentName: docsToSend[i].name,
             documentType: docsToSend[i].type,
             documentSize: docsToSend[i].size,
-            image: null, // Clear image field since this is a document
+            image: null,
           };
           const docMsgWithStatus: MessageType = { ...docMsg, status: "sent" };
 
-          // DIRECT UPDATE for documents too
           setMessages((prev) => {
             const exists = prev.some((m) => m._id === docMsgWithStatus._id);
             if (exists) return prev;
@@ -1370,7 +1204,6 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
       if (emitTyping) emitTyping(chatPartnerId, false);
 
-      // Scroll to bottom
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 200);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 400);
@@ -1399,9 +1232,6 @@ const handleDeleteMessage = async (msg: MessageType) => {
     }
   };
 
-  // -------------------------
-  // Date separator helpers
-  // -------------------------
   function isSameDay(d1: Date, d2: Date) {
     return d1.getFullYear() === d2.getFullYear() &&
       d1.getMonth() === d2.getMonth() &&
@@ -1431,9 +1261,6 @@ const handleDeleteMessage = async (msg: MessageType) => {
     }
   }
 
-  // -------------------------
-  // SEARCH: local debounced + build matchIndexes
-  // -------------------------
   useEffect(() => {
     if (searchTimer.current) {
       clearTimeout(searchTimer.current);
@@ -1458,19 +1285,10 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
       const idxs: number[] = [];
       for (let i = 0; i < local.length; i++) {
-        // local is already filtered, so all indices are valid
         idxs.push(i);
       }
       setMatchIndexes(idxs);
       setCurrentMatchIdx(0);
-
-      // if (idxs.length > 0) {
-      //   setTimeout(() => {
-      //     flatListRef.current?.scrollToIndex({ index: idxs[idxs.length - 1], animated: true, viewPosition: 0.5 });
-      //   }, 120);
-      // } else {
-      //   setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 120);
-      // }
     }, 300);
 
     return () => {
@@ -1485,10 +1303,9 @@ const handleDeleteMessage = async (msg: MessageType) => {
     if (matchIndexes.length === 0 || !filteredMessages) return;
     const nextIdx = Math.max(0, currentMatchIdx - 1);
     setCurrentMatchIdx(nextIdx);
-    // Scroll in the search modal should use filteredMessages indices
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     flatListRef.current?.scrollToIndex({
-      index: nextIdx,  // Use nextIdx directly since it maps to filteredMessages
+      index: nextIdx,  
       animated: true,
       viewPosition: 0.5
     });
@@ -1500,7 +1317,7 @@ const handleDeleteMessage = async (msg: MessageType) => {
     setCurrentMatchIdx(nextIdx);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     flatListRef.current?.scrollToIndex({
-      index: nextIdx,  // Use nextIdx directly since it maps to filteredMessages
+      index: nextIdx,  
       animated: true,
       viewPosition: 0.5
     });
@@ -1603,21 +1420,15 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
   const showing = filteredMessages !== null ? filteredMessages : messages;
 
-  // -------------------------
-  // RENDER MESSAGE - CRITICAL FIX FOR ALIGNMENT
-  // -------------------------
-   const renderMessage = ({ item, index }: { item: MessageType; index: number }) => {
+  const renderMessage = ({ item, index }: { item: MessageType; index: number }) => {
+    const isDeleted =
+      item.isDeletedForEveryone ||
+      (item as any).isDeleted ||
+      (item as any).deleteType === "forEveryone";
 
+    const currentDate = item?.createdAt ? new Date(item.createdAt) : null;
 
-  const isDeleted =
-    item.isDeletedForEveryone ||
-    (item as any).isDeleted ||
-    (item as any).deleteType === "forEveryone";
-
-  const currentDate = item?.createdAt ? new Date(item.createdAt) : null;
-
-
-    // ---------- DATE SEPARATOR LOGIC ----------
+    // DATE SEPARATOR LOGIC
     let showSeparator = false;
     let separatorLabel = "";
 
@@ -1633,12 +1444,10 @@ const handleDeleteMessage = async (msg: MessageType) => {
       showSeparator = false;
     }
 
-    // ---------- OWN MESSAGE CHECK ----------
-    // CRITICAL: Compare senderId with MY userId (not chatPartnerId)
     const isMine = String(item.senderId) === String(userId);
 
-    // ---------- FILE HANDLING ----------
-    const fileUrlRaw = item.image || item.document || null;
+    // File Handling
+    const fileUrlRaw = isDeleted ? null : (item.image ?? item.document ?? null);
     const fileUrl = normalizeFileUrl(fileUrlRaw);
     const isImageOrVideo = looksLikeImageOrVideo(fileUrl || undefined);
     const isVideo = fileUrl ? isVideoFile(fileUrl) : false;
@@ -1653,14 +1462,14 @@ const handleDeleteMessage = async (msg: MessageType) => {
       return (
         <View style={styles.tickContainer}>
           {status === "sent" && (
-  <Text style={[styles.tickText, styles.singleTick]}>✓</Text>
-)}
-{status === "delivered" && (
-  <Text style={[styles.tickText, styles.doubleTick]}>✓✓</Text>
-)}
-{status === "read" && (
-  <Text style={[styles.tickText, styles.readTick]}>✓✓</Text>
-)}
+            <Text style={[styles.tickText, styles.singleTick]}>✓</Text>
+          )}
+          {status === "delivered" && (
+            <Text style={[styles.tickText, styles.doubleTick]}>✓✓</Text>
+          )}
+          {status === "read" && (
+            <Text style={[styles.tickText, styles.readTick]}>✓✓</Text>
+          )}
 
         </View>
       );
@@ -1669,7 +1478,7 @@ const handleDeleteMessage = async (msg: MessageType) => {
     const isThisPinned =
       pinnedMessage && item._id && String(item._id) === String(pinnedMessage._id);
 
-    // ---------- RENDER ----------
+    // Render
     return (
       <>
         {/* DATE SEPARATOR */}
@@ -1688,210 +1497,198 @@ const handleDeleteMessage = async (msg: MessageType) => {
             isMine ? styles.myMessageWrapper : styles.theirMessageWrapper,
           ]}
         >
-        <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-  <TouchableOpacity
-    activeOpacity={0.9}
-    onPress={() => {
-      Animated.sequence([
-        Animated.timing(scaleAnim, {
-          toValue: 1.08,
-          duration: 80,
-          useNativeDriver: true,
-        }),
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 80,
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }}
-    onLongPress={(e) => {
-      if (item.isDeletedForEveryone) return;
+          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+            <TouchableOpacity
+              activeOpacity={0.9}
+              onPress={() => {
+                Animated.sequence([
+                  Animated.timing(scaleAnim, {
+                    toValue: 1.08,
+                    duration: 80,
+                    useNativeDriver: true,
+                  }),
+                  Animated.timing(scaleAnim, {
+                    toValue: 1,
+                    duration: 80,
+                    useNativeDriver: true,
+                  }),
+                ]).start();
+              }}
+              onLongPress={(e) => {
+                if (item.isDeletedForEveryone) return;
 
-      setLongPressTarget(item);
+                setLongPressTarget(item);
 
-      e.target.measure((x, y, width, height, pageX, pageY) => {
-        setPressLayout({
-          x: pageX,
-          y: pageY,
-          width,
-          height,
-        });
-      });
+                e.target.measure((x, y, width, height, pageX, pageY) => {
+                  setPressLayout({
+                    x: pageX,
+                    y: pageY,
+                    width,
+                    height,
+                  });
+                });
 
-      setReactionBarVisible(true);
-      setLongPressMenuVisible(true);
-    }}
-    style={[
-      styles.messageBubble,
-      isMine ? styles.myBubble : styles.theirBubble,
-    ]}
->
+                setReactionBarVisible(true);
+                setLongPressMenuVisible(true);
+              }}
+              style={[
+                styles.messageBubble,
+                isMine ? styles.myBubble : styles.theirBubble,
+              ]}
+            >
 
-            {/* IMAGE / VIDEO */}
-            {fileUrl && isImageOrVideo && (
-              <TouchableOpacity onPress={() => openSentImageViewer(fileUrl)}>
-                {isVideo ? (
-                  <View style={styles.videoContainer}>
-                    <Video
+              {/* IMAGE / VIDEO */}
+              {fileUrl && isImageOrVideo && (
+                <TouchableOpacity onPress={() => openSentImageViewer(fileUrl)}>
+                  {isVideo ? (
+                    <View style={styles.videoContainer}>
+                      <Video
+                        source={{ uri: fileUrl }}
+                        style={styles.messageImage}
+                        paused
+                        resizeMode="cover"
+                      />
+                      <View style={styles.videoOverlayCenter}>
+                        <Text style={styles.playIcon}>▶</Text>
+                      </View>
+                    </View>
+                  ) : (
+                    <Image
                       source={{ uri: fileUrl }}
                       style={styles.messageImage}
-                      paused
                       resizeMode="cover"
                     />
-                    <View style={styles.videoOverlayCenter}>
-                      <Text style={styles.playIcon}>▶</Text>
-                    </View>
-                  </View>
-                ) : (
-                  <Image
-                    source={{ uri: fileUrl }}
-                    style={styles.messageImage}
-                    resizeMode="cover"
-                  />
-                )}
-              </TouchableOpacity>
-              
-            )}
+                  )}
+                </TouchableOpacity>
 
-            {/* DOCUMENT */}
-            {fileUrl && !isImageOrVideo && (
-              <TouchableOpacity
-                style={[
-                  styles.messageDocumentContainer,
-                  isMine
-                    ? styles.messageDocumentContainerMy
-                    : styles.messageDocumentContainerTheir,
-                ]}
-                onPress={() => {
-                  const docName =
-                    item.documentName || filenameFromUrl(fileUrl) || "document.file";
-                  openDocument(fileUrl, docName);
-                }}
-              >
-                <Text style={styles.messageDocIcon}>
-                  {getDocumentIcon(item.documentType || filenameFromUrl(fileUrl))}
-                </Text>
-
-                <View style={styles.messageDocInfo}>
-                  <Text
-                    style={[
-                      styles.messageDocName,
-                      isMine && { color: "#1f2937" },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {item.documentName || filenameFromUrl(fileUrl)}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.messageDocSize,
-                      isMine && { color: "#6b7280" },
-                    ]}
-                  >
-                    {item.documentSize
-                      ? formatFileSize(item.documentSize)
-                      : "File"}
-                  </Text>
-                </View>
-
-                <Text style={{ fontSize: 22, marginLeft: 10 }}>⬇️ </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* TEXT MESSAGE */}
-            {/* DELETED MESSAGE (WHATSAPP STYLE) */}
-            
-              {/* TEXT MESSAGE */}
-{/* DELETED MESSAGE (WHATSAPP STYLE) */}
-{isDeleted ? (
-  <View style={{ marginBottom: 2 }}>
-    <Text
-      style={[
-        styles.deletedMessageText,
-        isMine ? styles.deletedMine : styles.deletedTheirs,
-      ]}
-    >
-      {isMine ? "🚫 You deleted this message" : "🚫 This message was deleted"}
-
-    </Text>
-  </View>
-) : (
-  item.text && (
-    <View style={{ marginBottom: 2 }}>
-      {isMine ? (
-        <Text style={styles.myMessageText}>{item.text}</Text>
-      ) : (
-        renderHighlightedText(item.text, index)
-      )}
-    </View>
-  )
-)}
-
-            {/* FOOTER: TIME + PIN + STATUS TICKS (WhatsApp style - inline with text) */}
-            <View style={styles.messageFooter}>
-              {isThisPinned && (
-                <Text
-                  style={{
-                    fontSize: 12,
-                    marginRight: 4,
-                    color: isMine ? "rgba(255,255,255,0.7)" : "#6b7280",
-                  }}
-                >
-                  📌
-                </Text>
               )}
 
-              <Text
+              {/* DOCUMENT */}
+              {fileUrl && !isImageOrVideo && (
+                <TouchableOpacity
+                  style={[
+                    styles.messageDocumentContainer,
+                    isMine
+                      ? styles.messageDocumentContainerMy
+                      : styles.messageDocumentContainerTheir,
+                  ]}
+                  onPress={() => {
+                    const docName =
+                      item.documentName || filenameFromUrl(fileUrl) || "document.file";
+                    openDocument(fileUrl, docName);
+                  }}
+                >
+                  <Text style={styles.messageDocIcon}>
+                    {getDocumentIcon(item.documentType || filenameFromUrl(fileUrl))}
+                  </Text>
+
+                  <View style={styles.messageDocInfo}>
+                    <Text
+                      style={[
+                        styles.messageDocName,
+                        isMine && { color: "#1f2937" },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.documentName || filenameFromUrl(fileUrl)}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.messageDocSize,
+                        isMine && { color: "#6b7280" },
+                      ]}
+                    >
+                      {item.documentSize
+                        ? formatFileSize(item.documentSize)
+                        : "File"}
+                    </Text>
+                  </View>
+
+                  <Text style={{ fontSize: 22, marginLeft: 10 }}>⬇️ </Text>
+                </TouchableOpacity>
+              )}
+
+              {isDeleted ? (
+                <View style={{ marginBottom: 2 }}>
+                  <Text
+                    style={[
+                      styles.deletedMessageText,
+                      isMine ? styles.deletedMine : styles.deletedTheirs,
+                    ]}
+                  >
+                    {isMine ? "🚫 You deleted this message" : "🚫 This message was deleted"}
+
+                  </Text>
+                </View>
+              ) : (
+                item.text && (
+                  <View style={{ marginBottom: 2 }}>
+                    {isMine ? (
+                      <Text style={styles.myMessageText}>{item.text}</Text>
+                    ) : (
+                      renderHighlightedText(item.text, index)
+                    )}
+                  </View>
+                )
+              )}
+
+              <View style={styles.messageFooter}>
+                {isThisPinned && (
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      marginRight: 4,
+                      color: isMine ? "rgba(255,255,255,0.7)" : "#6b7280",
+                    }}
+                  >
+                    📌
+                  </Text>
+                )}
+
+                <Text
+                  style={[
+                    styles.timeText,
+                    isMine ? styles.myTimeText : styles.theirTimeText,
+                  ]}
+                >
+                  {item.createdAt
+                    ? new Date(item.createdAt).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                    : ""}
+                </Text>
+
+                {renderStatusTicks()}
+              </View>
+            </TouchableOpacity>
+
+            {item.reactions && item.reactions.length > 0 && (
+              <View
                 style={[
-                  styles.timeText,
-                  isMine ? styles.myTimeText : styles.theirTimeText,
+                  {
+                    flexDirection: "row",
+                    backgroundColor: "#e5e7eb",
+                    borderRadius: 12,
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    marginTop: 4,
+                  },
+                  isMine ? { alignSelf: "flex-end" } : { alignSelf: "flex-start" },
                 ]}
               >
-                {item.createdAt
-                  ? new Date(item.createdAt).toLocaleTimeString([], {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                  : ""}
-              </Text>
-
-              {renderStatusTicks()}
-            </View>
-          </TouchableOpacity>
-          
-
-{/* 👇 PASTE THIS EXACTLY HERE */}
-{item.reactions && item.reactions.length > 0 && (
-  <View
-    style={[
-      {
-        flexDirection: "row",
-        backgroundColor: "#e5e7eb",
-        borderRadius: 12,
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        marginTop: 4,
-      },
-      isMine ? { alignSelf: "flex-end" } : { alignSelf: "flex-start" },
-    ]}
-  >
-    {item.reactions.map((r, i) => (
-      <Text key={i} style={{ marginRight: 4, fontSize: 12 }}>
-        {r.emoji}
-      </Text>
-    ))}
-  </View>
-)}
-
-</Animated.View>
-
-</View>
-
+                {item.reactions.map((r, i) => (
+                  <Text key={i} style={{ marginRight: 4, fontSize: 12 }}>
+                    {r.emoji}
+                  </Text>
+                ))}
+              </View>
+            )}
+          </Animated.View>
+        </View>
       </>
     );
   };
-
 
   if (loading) {
     return (
@@ -1906,43 +1703,29 @@ const handleDeleteMessage = async (msg: MessageType) => {
   const handleClearChat = () => {
     setMenuVisible(false);
 
-    Alert.alert(
-      "Clear chat",
-      "This will delete all messages in this chat only for you.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Clear",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              // Clear UI immediately
-              setMessages([]);
-              setFilteredMessages(null);
+    Alert.alert("Clear chat", "This will delete all messages in this chat only for you.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Clear",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await clearChatApi(chatPartnerId); 
+            setMessages([]);                   
+            setFilteredMessages(null);
 
-              // Save cleared time locally
-              await AsyncStorage.setItem(
-                `clearedAt:${chatPartnerId}`,
-                new Date().toISOString()
-              );
+            await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
+            setPinnedMessage(null);
 
-              // Remove pinned message
-              await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
-              setPinnedMessage(null);
-
-              // Call backend
-              await clearChatApi(chatPartnerId);
-
-              Alert.alert("Chat cleared");
-            } catch (e) {
-              console.warn("Clear chat failed", e);
-              Alert.alert("Chat cleared locally", "Messages cleared for you, but backend may still have them.");
-            }
-          },
+            Alert.alert("Chat cleared");
+          } catch (e) {
+            Alert.alert("Error", "Failed to clear chat");
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
+
 
 
   const handleReportUser = () => {
@@ -1962,56 +1745,79 @@ const handleDeleteMessage = async (msg: MessageType) => {
           <View style={styles.container}>
 
             {/* Modern Header */}
-<View style={styles.header}>
-  <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-    <Text style={styles.backButtonText}>←</Text>
-  </TouchableOpacity>
-
-  <View style={{ flex: 1, marginHorizontal: 12 }}>
-    <Text style={styles.headerName}>{name}</Text>
-    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      <View style={{
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: partnerOnline ? '#4ade80' : '#9ca3af',
-        marginRight: 6,
-        marginTop: 2
-      }} />
-      <Text style={styles.chatStatusSmall}>
-        {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
-      </Text>
-    </View>
-  </View>
-
-              <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.searchIconBtn}>
-                <Text style={styles.searchIcon}>⋮</Text>
+            <View style={styles.header}>
+              <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+                <Text style={styles.backButtonText}>←</Text>
               </TouchableOpacity>
+
+              <View style={{ flex: 1, marginHorizontal: 12 }}>
+                <Text style={styles.headerName}>{name}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 4,
+                    backgroundColor: partnerOnline ? '#4ade80' : '#9ca3af',
+                    marginRight: 6,
+                    marginTop: 2
+                  }} />
+                  <Text style={styles.chatStatusSmall}>
+                    {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
+                  </Text>
+                </View>
+              </View>
+
+              <View style={{ flexDirection: "row", alignItems: "center" }}>
+                {/* Search Emoji */}
+                <TouchableOpacity
+                  onPress={() => setSearchModalVisible(true)}
+                  style={{ marginRight: 12 }}
+                >
+                  <Text
+                    style={{
+                      color: "#fff",
+                      marginRight: 14,
+                      fontSize: 26,
+                      fontWeight: "500",
+                      transform: [{ rotate: "-90deg" }],
+                    }}
+                  >
+                    ⌕
+                  </Text>
+
+                </TouchableOpacity>
+
+                {/* 3-dot menu */}
+                <TouchableOpacity onPress={() => setMenuVisible(true)} style={styles.searchIconBtn}>
+                  <Text style={styles.searchIcon}>⋮</Text>
+                </TouchableOpacity>
+              </View>
+
             </View>
 
             {pinnedMessage && (
-  <TouchableOpacity
-    style={{
-      backgroundColor: "#f0f9ff",
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      marginHorizontal: 16,
-      marginTop: 12,
-      marginBottom: 8,
-      borderRadius: 14,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      borderWidth: 1,
-      borderColor: "#bae6fd",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.05,
-      shadowRadius: 2,
-      elevation: 1,
-    }}
-    onPress={() => scrollToPinned()}
-  >
+              <TouchableOpacity
+                style={{
+                  backgroundColor: "#f0f9ff",
+                  paddingHorizontal: 16,
+                  paddingVertical: 12,
+                  marginHorizontal: 16,
+                  marginTop: 12,
+                  marginBottom: 8,
+                  borderRadius: 14,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  borderWidth: 1,
+                  borderColor: "#bae6fd",
+                  shadowColor: "#000",
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.05,
+                  shadowRadius: 2,
+                  elevation: 1,
+                }}
+                onPress={() => scrollToPinned()}
+              >
                 <View style={{ flexDirection: "row", alignItems: "center", flex: 1 }}>
                   <Text style={{ marginRight: 10 }}>📌</Text>
                   <View style={{ flex: 1 }}>
@@ -2029,59 +1835,10 @@ const handleDeleteMessage = async (msg: MessageType) => {
               </TouchableOpacity>
             )}
 
-{/* REACTION
-{reactionBarVisible && pressLayout && (
-  <View
-    style={{
-      position: "absolute",
-      top: pressLayout.y - 80,
-      left: pressLayout.x - 20,
-      backgroundColor: "#1f2937",
-      borderRadius: 30,
-      paddingVertical: 8,
-      paddingHorizontal: 14,
-      flexDirection: "row",
-      zIndex: 9999,
-    }}
-  >
-    {["👍", "❤️", "😂", "😮", "😢", "🙏"].map(e => (
-      <TouchableOpacity
-        key={e}
-        onPress={() => {
-          const msgId = longPressTarget!._id!;
-
-          setMessages(prev =>
-            prev.map(m =>
-              m._id === msgId
-                ? {
-                    ...m,
-                    reactions: [
-                      ...(m.reactions || []).filter(r => r.userId !== userId),
-                      { userId: String(userId), emoji: e },
-                    ],
-                  }
-                : m
-            )
-          );
-
-          emitReactToMessage(msgId, e, chatPartnerId);
-          setReactionBarVisible(false);
-        }}
-      >
-        <Text style={{ fontSize: 22 }}>{e}</Text>
-      </TouchableOpacity>
-      
-    ))}
-  </View>
-)}
-*/}
-
             <Modal visible={menuVisible} transparent animationType="fade" onRequestClose={() => setMenuVisible(false)}>
               <TouchableOpacity style={menuStyles.overlay} activeOpacity={1} onPress={() => setMenuVisible(false)}>
                 <View style={menuStyles.menu}>
-                  <TouchableOpacity style={menuStyles.menuItem} onPress={() => { setMenuVisible(false); setSearchModalVisible(true); }}>
-                    <Text style={menuStyles.menuText}>Search chat</Text>
-                  </TouchableOpacity>
+
                   <TouchableOpacity style={menuStyles.menuItem} onPress={handleClearChat}>
                     <Text style={menuStyles.menuText}>Clear chat</Text>
                   </TouchableOpacity>
@@ -2278,49 +2035,50 @@ const handleDeleteMessage = async (msg: MessageType) => {
 
                       {/* DELETE FOR EVERYONE – ONLY IF I AM SENDER */}
                       {String(longPressTarget.senderId) === String(userId) && (
-  <>
-    </>
-)}
+                        <>
+                        </>
+                      )}
 
-    <View style={{ height: 1, backgroundColor: "#eee" }} />
+                      {String(longPressTarget.senderId) === String(userId) && (
+                        <>
+                          <View style={{ height: 1, backgroundColor: "#eee" }} />
 
-    <TouchableOpacity
-      style={{ paddingVertical: 12 }}
-      onPress={async () => {
-        try {
-          await deleteMessageForEveryone(longPressTarget._id!);
 
-          setMessages(prev =>
-            prev.map(m =>
-              m._id === longPressTarget._id
-                ? {
-                    ...m,
-                    isDeletedForEveryone: true,
-                    text: null,
-                    image: null,
-                    document: null,
-                  }
-                : m
-            )
-          );
+                          <TouchableOpacity
+                            style={{ paddingVertical: 12 }}
+                            onPress={async () => {
+                              try {
+                                await deleteMessageForEveryone(longPressTarget._id!);
 
-          emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
-        } catch (e) {
-          Alert.alert(
-            "Cannot delete message",
-            "You can’t delete this message for everyone anymore."
-          );
-        } finally {
-          setLongPressMenuVisible(false);
-        }
-      }}
-    >
-      <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
-        Delete for everyone
-      </Text>
-    </TouchableOpacity>
-  </>
-)}
+                                setMessages(prev =>
+                                  prev.map(m =>
+                                    m._id === longPressTarget._id
+                                      ? normalizeDeleted({ ...m, isDeletedForEveryone: true })
+                                      : m
+                                  )
+                                );
+
+
+                                emitDeleteForEveryone(longPressTarget._id!, chatPartnerId);
+                              } catch (e) {
+                                Alert.alert(
+                                  "Cannot delete message",
+                                  "You can’t delete this message for everyone anymore."
+                                );
+                              } finally {
+                                setLongPressMenuVisible(false);
+                              }
+                            }}
+                          >
+                            <Text style={{ fontSize: 16, fontWeight: "600", color: "#ef4444" }}>
+                              Delete for everyone
+                            </Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </>
+                  )}
+
                 </View>
               </TouchableOpacity>
             </Modal>
@@ -2356,6 +2114,8 @@ const handleDeleteMessage = async (msg: MessageType) => {
                 keyboardShouldPersistTaps="handled"
                 renderItem={renderMessage}
                 keyExtractor={getMessageKey}
+                initialNumToRender={50}
+                windowSize={21}
                 contentContainerStyle={[
                   styles.messagesContainer,
                   {
@@ -2471,32 +2231,29 @@ const handleDeleteMessage = async (msg: MessageType) => {
                   </TouchableOpacity>
 
                   <TextInput
-  ref={textInputRef}
-  placeholder="Type a message..."
-  placeholderTextColor="#9ca3af"
-  style={styles.input}
-  value={message}
-  onChangeText={(t) => {
-    setMessage(t);
-    if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
-  }}
-  multiline
-  editable={!sending}
-  onFocus={() => {
-    // Move input to top when focused
-    setIsInputAtTop(true);
-    // Scroll to bottom when typing starts
-    setTimeout(() => {
-      flatListRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  }}
-  onBlur={() => {
-    // Only move back to bottom if there's no content
-    if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) {
-      setIsInputAtTop(false);
-    }
-  }}
-/>
+                    ref={textInputRef}
+                    placeholder="Type a message..."
+                    placeholderTextColor="#9ca3af"
+                    style={styles.input}
+                    value={message}
+                    onChangeText={(t) => {
+                      setMessage(t);
+                      if (emitTyping) emitTyping(chatPartnerId, t.length > 0);
+                    }}
+                    multiline
+                    editable={!sending}
+                    onFocus={() => {
+                      setIsInputAtTop(true);
+                      setTimeout(() => {
+                        flatListRef.current?.scrollToEnd({ animated: true });
+                      }, 100);
+                    }}
+                    onBlur={() => {
+                      if (!message.trim() && selectedImages.length === 0 && selectedDocuments.length === 0) {
+                        setIsInputAtTop(false);
+                      }
+                    }}
+                  />
 
                   <TouchableOpacity
                     style={[styles.sendButton, sending && styles.sendButtonDisabled]}
@@ -2594,17 +2351,9 @@ const handleDeleteMessage = async (msg: MessageType) => {
           </View>
         </KeyboardAvoidingView>
       </SafeAreaView>
-     
-
-
-      
     </View>
-    
-    
   );
-  
 };
-
 
 const styles = StyleSheet.create({
   container: {
@@ -2617,21 +2366,21 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 16, fontWeight: "600", color: "#6b7280", marginBottom: 6 },
   emptySubtext: { fontSize: 13, color: "#9ca3af", textAlign: "center" },
   header: {
-  backgroundColor: COLORS.primary,
-  paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight || 35,
-  paddingBottom: 15, // CHANGED: from 10 to 15
-  paddingHorizontal: 16, // CHANGED: from 12 to 16
-  flexDirection: "row",
-  alignItems: "center",
-  justifyContent: "space-between",
-  borderBottomLeftRadius: 20,
-  borderBottomRightRadius: 20,
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: 3 },
-  shadowOpacity: 0.15, // CHANGED: from 0.12 to 0.15
-  shadowRadius: 10, // CHANGED: from 8 to 10
-  elevation: 8, // CHANGED: from 6 to 8
-},
+    backgroundColor: COLORS.primary,
+    paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight || 35,
+    paddingBottom: 15, 
+    paddingHorizontal: 16, 
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    borderBottomLeftRadius: 20,
+    borderBottomRightRadius: 20,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15, 
+    shadowRadius: 10, 
+    elevation: 8, 
+  },
   backButton: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   backButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
   headerName: { color: "#fff", fontSize: 16, fontWeight: "700", textAlign: "left" },
@@ -2641,7 +2390,7 @@ const styles = StyleSheet.create({
   searchHighlight: { backgroundColor: "#fff59b", color: "#111827", fontWeight: "700" },
   messagesContainer: {
     padding: 12,
-    paddingBottom: 20, // Will be overridden dynamically
+    paddingBottom: 20, 
     flexGrow: 1
   },
   messageWrapper: { marginVertical: 4 },
@@ -2651,17 +2400,17 @@ const styles = StyleSheet.create({
   myBubble: { backgroundColor: COLORS.primary, borderBottomRightRadius: 4 },
   theirBubble: { backgroundColor: "#fff", borderBottomLeftRadius: 4, borderWidth: 1, borderColor: "#e5e7eb" },
   myMessageText: {
-  color: "#fff",
-  fontSize: 15, // CHANGED: from 14 to 15
-  lineHeight: 20, // CHANGED: from 19 to 20
-  paddingBottom: 2,
-},
-theirMessageText: {
-  color: "#1f2937",
-  fontSize: 15, // CHANGED: from 14 to 15
-  lineHeight: 20, // CHANGED: from 19 to 20
-  paddingBottom: 2,
-},
+    color: "#fff",
+    fontSize: 15, 
+    lineHeight: 20, 
+    paddingBottom: 2,
+  },
+  theirMessageText: {
+    color: "#1f2937",
+    fontSize: 15, 
+    lineHeight: 20,
+    paddingBottom: 2,
+  },
   messageImage: { width: 180, height: 180, borderRadius: 10, marginBottom: 6 },
   messageDocIcon: { fontSize: 28, marginRight: 10 },
   messageDocInfo: { flex: 1 },
@@ -2704,34 +2453,34 @@ theirMessageText: {
     color: "#4FC3F7",
   },
   inputContainer: {
-  flexDirection: "row",
-  paddingHorizontal: 16, // CHANGED: from 12 to 16
-  paddingTop: 12,
-  paddingBottom: 14, // ADDED: extra bottom padding
-  borderTopWidth: 1,
-  borderColor: "#e5e7eb",
-  alignItems: "flex-end",
-  backgroundColor: "#fff",
-  shadowColor: "#000",
-  shadowOffset: { width: 0, height: -2 }, // CHANGED: from -1 to -2
-  shadowOpacity: 0.1, // CHANGED: from 0.08 to 0.1
-  shadowRadius: 8, // CHANGED: from 6 to 8
-  elevation: 5,
-},
+    flexDirection: "row",
+    paddingHorizontal: 16, 
+    paddingTop: 12,
+    paddingBottom: 14, 
+    borderTopWidth: 1,
+    borderColor: "#e5e7eb",
+    alignItems: "flex-end",
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -2 }, 
+    shadowOpacity: 0.1, 
+    shadowRadius: 8, 
+    elevation: 5,
+  },
   mediaButton: { padding: 6, marginRight: 6, backgroundColor: "#f3f4f6", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   mediaButtonText: { fontSize: 16 },
-input: { 
-  flex: 1, 
-  backgroundColor: "#f9fafb", 
-  borderRadius: 22, // CHANGED: from 18 to 22
-  paddingHorizontal: 16, // CHANGED: from 14 to 16
-  paddingVertical: 12, // CHANGED: from 10 to 12
-  marginHorizontal: 6, 
-  fontSize: 16, // CHANGED: from 15 to 16
-  maxHeight: 90, 
-  borderWidth: 1, 
-  borderColor: "#e5e7eb" 
-},  sendButton: { backgroundColor: COLORS.primary, width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 6, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 2 },
+  input: {
+    flex: 1,
+    backgroundColor: "#f9fafb",
+    borderRadius: 22,
+    paddingHorizontal: 16, 
+    paddingVertical: 12,
+    marginHorizontal: 6,
+    fontSize: 16,
+    maxHeight: 90,
+    borderWidth: 1,
+    borderColor: "#e5e7eb"
+  }, sendButton: { backgroundColor: COLORS.primary, width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center", marginLeft: 6, shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 2 },
   sendButtonDisabled: { opacity: 0.6 },
   sendText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   selectedBar: { flexDirection: "row", alignItems: "center", padding: 12, borderTopWidth: 1, borderColor: "#e5e7eb", backgroundColor: "#f9fafb" },
@@ -2761,17 +2510,17 @@ input: {
   blockConfirmButton: { backgroundColor: "#ef4444" },
   blockConfirmText: { color: "#fff", fontSize: 15, fontWeight: "600" },
   dateSeparatorWrap: { alignItems: "center", marginVertical: 6 },
-  dateSeparator: { 
-  backgroundColor: "rgba(0,0,0,0.08)", // CHANGED: from 0.06 to 0.08
-  paddingVertical: 6, // CHANGED: from 4 to 6
-  paddingHorizontal: 12, // CHANGED: from 10 to 12
-  borderRadius: 16 // CHANGED: from 14 to 16
-},
-dateSeparatorText: { 
-  color: "#374151", 
-  fontSize: 12, // CHANGED: from 11 to 12
-  fontWeight: "600" 
-},
+  dateSeparator: {
+    backgroundColor: "rgba(0,0,0,0.08)", // CHANGED: from 0.06 to 0.08
+    paddingVertical: 6, // CHANGED: from 4 to 6
+    paddingHorizontal: 12, // CHANGED: from 10 to 12
+    borderRadius: 16 // CHANGED: from 14 to 16
+  },
+  dateSeparatorText: {
+    color: "#374151",
+    fontSize: 12, // CHANGED: from 11 to 12
+    fontWeight: "600"
+  },
   videoOverlay: { justifyContent: "center", alignItems: "center", backgroundColor: "#000" },
   playIcon: { fontSize: 36, color: "rgba(255,255,255,0.9)", position: "absolute" },
   messageDocumentContainer: {

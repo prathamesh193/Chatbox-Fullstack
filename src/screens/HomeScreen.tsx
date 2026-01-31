@@ -1,5 +1,4 @@
 // src/screens/HomeScreen.tsx
-
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -15,15 +14,16 @@ import {
   TextInput,
   StyleSheet,
   Platform,
+  SafeAreaView,
 } from "react-native";
-
+import { pushService } from "../services/pushNotificationService";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useNavigation } from "@react-navigation/native";
 import { COLORS } from "../constants/colors";
 import { api } from "../utils/api";
 import { formatMessageTime } from "../utils/time";
 import SystemNavigationBar from "react-native-system-navigation-bar";
-
+import { useFocusEffect } from '@react-navigation/native';
 
 const brahmanLogo = require('../assets/brahman-logo.jpeg');
 const TAB_CONTACTS = "contacts";
@@ -40,14 +40,30 @@ const HomeScreen = () => {
   const [pinnedIds, setPinnedIds] = useState<string[]>([]);
 
   const [search, setSearch] = useState("");
-  const [selectedTab, setSelectedTab] = useState(TAB_CONTACTS);
+  const [selectedTab, setSelectedTab] = useState(TAB_CHATS);
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [profilePic, setProfilePic] = useState("");
 
   const [profileMenuVisible, setProfileMenuVisible] = useState(false);
   const slideAnim = useState(new Animated.Value(0))[0];
 
   const [actionModalVisible, setActionModalVisible] = useState(false);
   const [actionTarget, setActionTarget] = useState<any>(null);
+  const [myId, setMyId] = useState("");
 
+  // Initialize push notifications for logged-in user
+  useEffect(() => {
+    const initPush = async () => {
+      const userId = await AsyncStorage.getItem("userId");
+      if (userId) {
+        await pushService.initialize(userId);
+      }
+    };
+    initPush();
+  }, []);
+
+  // Configure Android navigation bar styling
   useEffect(() => {
     if (Platform.OS === 'android') {
       SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
@@ -55,9 +71,7 @@ const HomeScreen = () => {
     }
   }, []);
 
-  // ------------------------------------------------------
-  // CLEAN SEARCH RANKING
-  // ------------------------------------------------------
+  // Search ranking: prioritize names that start with query, then names that include it
   const rankResults = (list: any[], q: string) => {
     if (!q) return list;
     const L = q.toLowerCase();
@@ -74,9 +88,7 @@ const HomeScreen = () => {
     return [...starts, ...includes];
   };
 
-  // ------------------------------------------------------sss
-  // CHAT ORDERING - pin first then most recent activity
-  // ------------------------------------------------------
+  // Order chats: pinned chats first (sorted by recent activity), then unpinned chats (sorted by recent activity)
   const orderChats = (list: any[], pinnedArr: string[]) => {
     const pinnedSet = new Set(pinnedArr);
 
@@ -97,9 +109,7 @@ const HomeScreen = () => {
     return [...pinned, ...others];
   };
 
-  // ------------------------------------------------------
-  // FETCH LISTS
-  // ------------------------------------------------------
+  // Fetch contacts, chats, blocked users, and pinned chats from API
   const fetchLists = async () => {
     try {
       setLoading(true);
@@ -115,23 +125,19 @@ const HomeScreen = () => {
           api.get("/api/users/pinned"),
         ]);
 
-      // Contacts
       if (contactsRes.status === "fulfilled")
         setContacts(contactsRes.value.data || []);
       else setContacts([]);
 
-      // Chats (raw list)
       let rawChats: any[] = [];
       if (chatsRes.status === "fulfilled")
         rawChats = chatsRes.value.data || [];
 
-      // Blocked
       if (blockedRes.status === "fulfilled")
         setBlockedIds(
           (blockedRes.value.data || []).map((u: any) => String(u._id))
         );
 
-      // Pinned
       let pinnedList: string[] = [];
       if (pinnedRes.status === "fulfilled")
         pinnedList = (pinnedRes.value.data || []).map((u: any) =>
@@ -140,39 +146,59 @@ const HomeScreen = () => {
 
       setPinnedIds(pinnedList);
 
-      // ORDER CHATS - using new pinned list
       const ordered = orderChats(rawChats, pinnedList);
       setChats(ordered);
 
     } catch (err) {
-      console.log("Fetch error:", err);
       Alert.alert("Error", "Failed to load");
     } finally {
       setLoading(false);
     }
   };
-  const [myId, setMyId] = useState("");
 
-  // Load my userId once (from AsyncStorage)
+  // Load current user's ID from storage
   useEffect(() => {
     const loadMyId = async () => {
       try {
         const id = await AsyncStorage.getItem("userId");
         if (id) setMyId(id);
       } catch (e) {
-        console.log("Error loading userId:", e);
+        // Silent fail
       }
     };
-
     loadMyId();
   }, []);
 
-  // Fetch contacts + chats list
+  // Load current user profile data from API
+  useEffect(() => {
+    const loadUserData = async () => {
+      try {
+        const token = await AsyncStorage.getItem("token");
+        if (!token) return;
+
+        try {
+          const response = await api.get("/api/profile/me");
+
+          if (response.data.success && response.data.user) {
+            const user = response.data.user;
+            setUserName(user.fullName || "");
+            setUserEmail(user.email || "");
+            setProfilePic(user.profilePic || "");
+          }
+        } catch (apiError) {
+        }
+      } catch (e) {
+      }
+    };
+    loadUserData();
+  }, []);
+
+  // Initial data fetch
   useEffect(() => {
     fetchLists();
   }, []);
 
-  // Sidebar slide animation (MUST be the third effect)
+  // Animate sidebar slide in/out
   useEffect(() => {
     Animated.timing(slideAnim, {
       toValue: profileMenuVisible ? 1 : 0,
@@ -181,9 +207,32 @@ const HomeScreen = () => {
     }).start();
   }, [profileMenuVisible]);
 
-  // ------------------------------------------------------
-  // ACTION MENU
-  // ------------------------------------------------------
+  // Reload user data and chats when screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      const reloadData = async () => {
+        try {
+          const token = await AsyncStorage.getItem("token");
+          if (!token) return;
+
+          const response = await api.get("/api/profile/me");
+
+          if (response.data.success && response.data.user) {
+            const user = response.data.user;
+            setUserName(user.fullName || "");
+            setUserEmail(user.email || "");
+            setProfilePic(user.profilePic || "");
+          }
+        } catch (err) {
+        }
+      };
+
+      reloadData();
+      fetchLists();
+    }, [])
+  );
+
+  // Open action menu for a specific chat (pin/unpin)
   const openActionMenu = (user: any) => {
     setActionTarget(user);
     setActionModalVisible(true);
@@ -194,6 +243,7 @@ const HomeScreen = () => {
     setActionTarget(null);
   };
 
+  // Toggle pin status for a chat
   const handlePinToggle = async () => {
     if (!actionTarget) return;
     try {
@@ -212,37 +262,13 @@ const HomeScreen = () => {
     closeActionMenu();
   };
 
-  // ------------------------------------------------------
-  // RENDER ITEM
-  // ------------------------------------------------------
+  // Render individual chat item with message preview and status
   const renderItem = ({ item }: any) => {
     const isPinned = pinnedIds.includes(String(item._id));
 
-    // Determine what to show under the username
     let lastText = "Tap to message";
     let isUnread = false;
 
-    // if (item.lastMessage) {
-    //   const msg = item.lastMessage;
-    //   const isMe = msg.senderId === myId;
-
-    //   if (isMe) {
-    //     // Messages YOU sent
-    //     if (msg.status === "sent") lastText = "Message sent";
-    //     else if (msg.status === "delivered") lastText = "Message delivered";
-    //     else if (msg.status === "read") lastText = "Message seen";
-    //   } else {
-    //     // Messages THEY sent
-    //     if (msg.status !== "read") {
-    //       lastText = "Sent a message";
-    //       isUnread = true;
-    //     } else {
-    //       // already read → show message text
-    //       lastText = msg.text || (msg.image ? "📷 Image" : "Message");
-    //     }
-    //   }
-    // }
-    // Check if I blocked this user
     const iBlockedThem = blockedIds.includes(String(item._id));
 
     if (iBlockedThem) {
@@ -253,17 +279,14 @@ const HomeScreen = () => {
       const isMe = msg.senderId === myId;
 
       if (isMe) {
-        // Messages YOU sent
         if (msg.status === "sent") lastText = "Message sent";
         else if (msg.status === "delivered") lastText = "Message delivered";
         else if (msg.status === "read") lastText = "Message seen";
       } else {
-        // Messages THEY sent
         if (msg.status !== "read") {
           lastText = "Sent a message";
           isUnread = true;
         } else {
-          // already read → show message text
           lastText = msg.text || (msg.image ? "📷 Image" : "Message");
         }
       }
@@ -275,63 +298,53 @@ const HomeScreen = () => {
       item.updatedAt ||
       null;
 
-return (
-  <TouchableOpacity
-    style={styles.igRow}
-    onPress={() =>
-      navigation.navigate("Chat", {
-        userId: item._id,
-        name: item.fullName,
-      })
-    }
-    onLongPress={() => openActionMenu(item)}
-  >
-    {/* Avatar */}
-    <Image
-      source={{
-        uri:
-          item.profilePic ||
-          "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-      }}
-      style={styles.igAvatar}
-    />
-
-    {/* Middle */}
-    <View style={styles.igContent}>
-      <View style={styles.igTopRow}>
-        <Text style={styles.igName} numberOfLines={1}>
-          {item.fullName}
-        </Text>
-
-        {lastTime && (
-          <Text style={styles.igTime}>
-            {formatMessageTime(lastTime)}
-          </Text>
-        )}
-      </View>
-
-      <Text
-        numberOfLines={1}
-        style={[styles.igMessage, isUnread && styles.igUnread]}
+    return (
+      <TouchableOpacity
+        style={styles.igRow}
+        onPress={() =>
+          navigation.navigate("Chat", {
+            userId: item._id,
+            name: item.fullName,
+          })
+        }
+        onLongPress={() => openActionMenu(item)}
       >
-        {lastText}
-      </Text>
-    </View>
+        <Image
+          source={{ uri: item.profilePic ? item.profilePic.replace('http://localhost:3000', 'http://139.59.87.161:3000') : 'https://cdn-icons-png.flaticon.com/512/149/149071.png' }}
+          style={styles.igAvatar}
+        />
 
-    {/* Right indicator */}
-    {isUnread ? (
-      <View style={styles.igUnreadDot} />
-    ) : isPinned ? (
-      <Text style={styles.igPin}>📌</Text>
-    ) : null}
-  </TouchableOpacity>
-);
+        <View style={styles.igContent}>
+          <View style={styles.igTopRow}>
+            <Text style={styles.igName} numberOfLines={1}>
+              {item.fullName}
+            </Text>
 
+            {lastTime && (
+              <Text style={styles.igTime}>
+                {formatMessageTime(lastTime)}
+              </Text>
+            )}
+          </View>
+
+          <Text
+            numberOfLines={1}
+            style={[styles.igMessage, isUnread && styles.igUnread]}
+          >
+            {lastText}
+          </Text>
+        </View>
+
+        {isUnread ? (
+          <View style={styles.igUnreadDot} />
+        ) : isPinned ? (
+          <Text style={styles.igPin}>📌</Text>
+        ) : null}
+      </TouchableOpacity>
+    );
   };
 
-  // ------------------------------------------------------
-  // LIST DATA
-  // ------------------------------------------------------
+  // Filter and rank the list based on search query
   const listToShow =
     selectedTab === TAB_CONTACTS
       ? rankResults(
@@ -347,112 +360,85 @@ return (
         search
       );
 
-  // ------------------------------------------------------
-  // UI
-  // ------------------------------------------------------
   return (
     <View style={styles.container}>
-      <StatusBar backgroundColor={COLORS.primary} />
+      <StatusBar backgroundColor={COLORS.primary} barStyle="light-content" />
 
-      {/* HEADER */}
-      <View style={styles.header}>
-        {/* LOGO */}
-        <View style={styles.logoContainer}>
-          <Image
-            source={require('../assets/brahman-logo.jpeg')}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
-        </View>
+      {/* Header with logo, username, and hamburger menu */}
+      <View style={styles.headerWrapper}>
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.header}>
+            <View style={styles.logoContainer}>
+              <Image
+                source={require('../assets/brahman-logo.jpeg')}
+                style={styles.logoImage}
+                resizeMode="cover"
+              />
+            </View>
 
-        <View style={styles.headerLeft}>
-          <Text style={styles.headerTitle}>Messages</Text>
-          <Text style={styles.headerSubtitle}>
-            {listToShow.length} conversations
-          </Text>
-        </View>
+            <View style={styles.headerCenter}>
+              <Text style={styles.usernameText} numberOfLines={1}>
+                {userName || "User"}
+              </Text>
+            </View>
 
-        <TouchableOpacity
-          style={styles.profileIconContainer}
-          onPress={() => setProfileMenuVisible(true)}
-        >
-          <Image
-            source={{
-              uri: "https://cdn-icons-png.flaticon.com/512/709/709722.png",
-            }}
-            style={styles.profileImage}
-          />
-        </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.hamburgerButton}
+              onPress={() => setProfileMenuVisible(true)}
+            >
+              <View style={styles.hamburgerLine} />
+              <View style={styles.hamburgerLine} />
+              <View style={styles.hamburgerLine} />
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+
+        <View style={styles.headerBorder} />
       </View>
 
-
-      {/* TABS */}
-      <View style={tabsStyles.tabRow}>
-        <TouchableOpacity
-          style={[
-            tabsStyles.tabButton,
-            selectedTab === TAB_CONTACTS && tabsStyles.tabActive,
-          ]}
-          onPress={() => setSelectedTab(TAB_CONTACTS)}
-        >
-          <Text
-            style={[
-              tabsStyles.tabText,
-              selectedTab === TAB_CONTACTS && tabsStyles.tabTextActive,
-            ]}
-          >
-            Contacts
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            tabsStyles.tabButton,
-            selectedTab === TAB_CHATS && tabsStyles.tabActive,
-          ]}
-          onPress={() => setSelectedTab(TAB_CHATS)}
-        >
-          <Text
-            style={[
-              tabsStyles.tabText,
-              selectedTab === TAB_CHATS && tabsStyles.tabTextActive,
-            ]}
-          >
-            Chats
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* SEARCH BAR */}
+      {/* Search bar */}
       <View style={searchStyles.searchRow}>
-<TextInput
-  placeholder={
-    selectedTab === TAB_CONTACTS
-      ? "Search contacts"
-      : "Search chats"
-  }
-  placeholderTextColor="#9ca3af"
-  value={search}
-  onChangeText={setSearch}
-  style={searchStyles.searchInput}
-/>
-
-
-        <TouchableOpacity style={searchStyles.refreshBtn} onPress={fetchLists}>
-          <Text style={searchStyles.refreshText}>⟳</Text>
-        </TouchableOpacity>
+        <View style={searchStyles.searchContainer}>
+          <Text style={searchStyles.searchIcon}>🔍</Text>
+          <TextInput
+            placeholder="Search"
+            placeholderTextColor="#9ca3af"
+            value={search}
+            onChangeText={setSearch}
+            style={searchStyles.searchInput}
+          />
+        </View>
       </View>
 
-      {/* LIST */}
+      <View style={styles.messagesLabelContainer}>
+        <Text style={styles.messagesLabel}>Messages</Text>
+      </View>
+
+      {/* Chat list */}
       <FlatList
         data={listToShow}
         keyExtractor={(item) => String(item._id)}
         renderItem={renderItem}
         contentContainerStyle={styles.listContainer}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          !loading ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIllustration}>
+                <View style={styles.emptyCircle}>
+                  <Text style={styles.emptyEmoji}>💬</Text>
+                </View>
+              </View>
+              <Text style={styles.emptyTitle}>No Conversations Yet</Text>
+              <Text style={styles.emptyDescription}>
+                Start a conversation to see your messages here
+              </Text>
+            </View>
+          ) : null
+        }
       />
 
-      {/* ACTION MODAL */}
+      {/* Action modal for pin/unpin */}
       <Modal visible={actionModalVisible} transparent animationType="fade">
         <View style={styles.actionModalOverlay}>
           <View style={styles.actionModal}>
@@ -460,7 +446,6 @@ return (
               {actionTarget?.fullName}
             </Text>
 
-            {/* PIN / UNPIN */}
             <TouchableOpacity
               style={styles.actionButton}
               onPress={handlePinToggle}
@@ -472,7 +457,6 @@ return (
               </Text>
             </TouchableOpacity>
 
-            {/* CANCEL */}
             <TouchableOpacity
               style={styles.cancelButton}
               onPress={closeActionMenu}
@@ -482,7 +466,8 @@ return (
           </View>
         </View>
       </Modal>
-      {/* SIDEBAR MENU */}
+
+      {/* Sidebar navigation menu */}
       <Modal visible={profileMenuVisible} transparent animationType="none">
         <View style={styles.modalContainer}>
           <TouchableOpacity
@@ -500,55 +485,106 @@ return (
                   {
                     translateX: slideAnim.interpolate({
                       inputRange: [0, 1],
-                      outputRange: [300, 0], // slide from right
+                      outputRange: [-280, 0],
                     }),
                   },
                 ],
               },
             ]}
           >
-            {/* SIDEBAR HEADER */}
-            <View style={styles.sidebarHeader}>
-              <Text style={styles.sidebarTitle}>Profile</Text>
-
+            {/* User profile section */}
+            <View style={styles.drawerHeader}>
               <TouchableOpacity
-                style={styles.closeButton}
+                style={styles.drawerBackButton}
                 onPress={() => setProfileMenuVisible(false)}
               >
-                <Text style={styles.closeIcon}>×</Text>
+                <Text style={styles.drawerBackButtonText}>←</Text>
+              </TouchableOpacity>
+
+              <View style={styles.drawerProfileSection}>
+                <View style={styles.drawerAvatarWrapper}>
+                  <Image
+                    source={{ uri: profilePic ? profilePic.replace('http://localhost:3000', 'http://139.59.87.161:3000') : 'https://cdn-icons-png.flaticon.com/512/149/149071.png' }}
+                    style={styles.drawerAvatar}
+                  />
+                </View>
+                <Text style={styles.drawerUserName} numberOfLines={1}>
+                  {userName || "User"}
+                </Text>
+                <Text style={styles.drawerUserEmail} numberOfLines={1}>
+                  {userEmail || "user@example.com"}
+                </Text>
+              </View>
+            </View>
+
+            {/* Navigation menu items */}
+            <View style={styles.drawerMenu}>
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  setProfileMenuVisible(false);
+                  navigation.navigate("Profile");
+                }}
+              >
+                <View style={styles.drawerMenuIcon}>
+                  <Text style={styles.drawerMenuIconText}>👤</Text>
+                </View>
+                <Text style={styles.drawerMenuText}>My Profile</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  setProfileMenuVisible(false);
+                  navigation.navigate("Contacts");
+                }}
+              >
+                <View style={styles.drawerMenuIcon}>
+                  <Text style={styles.drawerMenuIconText}>👥</Text>
+                </View>
+                <Text style={styles.drawerMenuText}>Contacts</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  setProfileMenuVisible(false);
+                  Alert.alert("Announcement", "This Feature will be added soon");
+                }}
+              >
+                <View style={styles.drawerMenuIcon}>
+                  <Text style={styles.drawerMenuIconText}>📢</Text>
+                </View>
+                <Text style={styles.drawerMenuText}>Announcement</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.drawerMenuItem}
+                onPress={() => {
+                  setProfileMenuVisible(false);
+                  navigation.navigate("AboutUs");
+                }}
+              >
+                <View style={styles.drawerMenuIcon}>
+                  <Text style={styles.drawerMenuIconText}>ℹ️</Text>
+                </View>
+                <Text style={styles.drawerMenuText}>About Us</Text>
               </TouchableOpacity>
             </View>
 
-            {/* PROFILE SECTION */}
-            <View style={styles.profileSection}>
-              <View style={styles.profileImageWrapper}>
-                <Image
-                  source={{
-                    uri: "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                  }}
-                  style={styles.largeProfileImage}
-                />
-                <View style={styles.profileImageGlow} />
-              </View>
-              <Text style={styles.userName}>Your Profile</Text>
-              <View style={styles.profileDivider} />
-            </View>
-
-            {/* LOGOUT */}
-            <View style={styles.logoutSection}>
+            {/* Logout button */}
+            <View style={styles.drawerFooter}>
               <TouchableOpacity
-                style={styles.logoutButton}
+                style={styles.drawerLogoutButton}
                 onPress={async () => {
-                  console.log("🚪 Starting logout...");
-                  await AsyncStorage.multiRemove(['token', 'userId', 'userData']);
+                  await AsyncStorage.multiRemove(['token', 'userId', 'userData', 'fullName']);
                   navigation.reset({
                     index: 0,
                     routes: [{ name: 'Login' }],
                   });
-                  console.log("✅ Logout complete");
                 }}
               >
-                <Text style={styles.logoutText}>Logout</Text>
+                <Text style={styles.drawerLogoutText}>Logout</Text>
               </TouchableOpacity>
             </View>
           </Animated.View>
@@ -561,7 +597,7 @@ return (
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#FFFFFF",
   },
   loadingContainer: {
     flex: 1,
@@ -582,78 +618,193 @@ const styles = StyleSheet.create({
   sidebarTitleContainer: {
     flex: 1,
   },
-
-  header: {
+  headerWrapper: {
     backgroundColor: COLORS.primary,
-    paddingTop: 50,  // was 60
-    paddingBottom: 16, // was 20
-    paddingHorizontal: 20, // was 24
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+  },
+  safeArea: {
+    backgroundColor: COLORS.primary,
+  },
+  header: {
     flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ? StatusBar.currentHeight + 8 : 38 : 8,
+    paddingBottom: 12,
+    backgroundColor: COLORS.primary,
     justifyContent: "space-between",
-    alignItems: "center",
-    borderBottomLeftRadius: 24, // was 32
-    borderBottomRightRadius: 24, // was 32
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 10 }, // was 15
-    shadowOpacity: 0.25, // was 0.3
-    shadowRadius: 20, // was 25
-    elevation: 8, // was 10
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
+    elevation: 2,
   },
-
-headerLeft: {
-  flex: 1,
-  alignItems: "center",
-},
-
-
-  headerTitle: {
-    color: "#fff",
-    fontSize: 28, // was 36
-    fontWeight: "700",
-    letterSpacing: 0.5, // was -1
-    marginBottom: 2, // was 4
-  },
-
-  headerSubtitle: {
-    color: "rgba(255,255,255,0.9)",
-    fontSize: 13.5, // was 16
-    fontWeight: "500",
-  },
-
-  profileIconContainer: {
-    width: 40, // was 44
-    height: 40, // was 44
-    borderRadius: 20, // was 22
-    backgroundColor: "rgba(255,255,255,0.15)",
+  hamburgerButton: {
+    padding: 8,
     justifyContent: "center",
+    alignItems: "flex-start",
+    width: 44,
+    height: 44,
+  },
+  hamburgerLine: {
+    width: 22,
+    height: 2.5,
+    backgroundColor: "#FFFFFF",
+    marginVertical: 2.5,
+    borderRadius: 2,
+  },
+  headerCenter: {
+    flex: 1,
     alignItems: "center",
-    borderWidth: 2,
-    borderColor: "rgba(255,255,255,0.2)",
+    justifyContent: "center",
+    marginHorizontal: 12,
+    height: 44,
   },
-
-  profileImage: {
-    width: 20, // was 22
-    height: 20, // was 22
-    tintColor: "#fff",
+  usernameText: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: 0.3,
+    textAlign: "center",
   },
-
-  // modal / sidebar
+  headerBorder: {
+    height: 3,
+    backgroundColor: COLORS.primary,
+  },
+  messagesLabelContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+    backgroundColor: "#FFFFFF",
+  },
+  messagesLabel: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#111827",
+    letterSpacing: 0.3,
+  },
   modalContainer: {
     flex: 1,
     flexDirection: "row",
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: "#000",
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   overlayTouchable: {
     flex: 1,
   },
   sidebar: {
-    width: 340,
+    width: 280,
     height: "100%",
-    backgroundColor: "#fff",
+    backgroundColor: "#FFFFFF",
     elevation: 25,
+    shadowColor: "#000",
+    shadowOffset: { width: 2, height: 0 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+  },
+  drawerHeader: {
+    backgroundColor: COLORS.primary,
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight ? StatusBar.currentHeight + 20 : 50 : 50,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+  },
+  drawerProfileSection: {
+    alignItems: "flex-start",
+  },
+  drawerAvatarWrapper: {
+    marginBottom: 12,
+  },
+  drawerAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 3,
+    borderColor: "#FFFFFF",
+  },
+  drawerUserName: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    marginBottom: 4,
+  },
+  drawerUserEmail: {
+    fontSize: 14,
+    fontWeight: "400",
+    color: "#FFFFFF",
+    opacity: 0.9,
+  },
+  drawerMenu: {
+    flex: 1,
+    paddingTop: 8,
+    backgroundColor: "#FFFFFF",
+  },
+  drawerMenuItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f3f4f6",
+  },
+  drawerMenuIcon: {
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 16,
+    backgroundColor: "#FFF5E6",
+    borderRadius: 18,
+  },
+  drawerMenuIconText: {
+    fontSize: 18,
+  },
+  drawerMenuText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+  },
+  drawerFooter: {
+    padding: 20,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#f3f4f6",
+  },
+  drawerLogoutButton: {
+    backgroundColor: "#FEE2E2",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  drawerLogoutText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#DC2626",
+  },
+  drawerBackButton: {
+    position: "absolute",
+    top: Platform.OS === 'android' ? StatusBar.currentHeight ? StatusBar.currentHeight + 16 : 46 : 46,
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 10,
+  },
+  drawerBackButtonText: {
+    fontSize: 20,
+    color: "#FFFFFF",
+    fontWeight: "600",
   },
   sidebarHeader: {
     flexDirection: "row",
@@ -710,6 +861,26 @@ headerLeft: {
     borderRadius: 60,
     borderWidth: 2,
     borderColor: COLORS.primary,
+  },
+  menuOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+  },
+  menuOptionIcon: {
+    fontSize: 20,
+    marginRight: 12,
+  },
+  menuOptionText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.textDark,
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: "#e5e7eb",
+    marginHorizontal: 20,
   },
   userName: {
     fontSize: 26,
@@ -784,36 +955,30 @@ headerLeft: {
     color: "#64748b",
     fontWeight: "500",
   },
-
-  // list
   listContainer: {
-    padding: 16, // was 20
-    paddingBottom: 30, // was 40
+    padding: 16,
+    paddingBottom: 30,
   },
-
   userCard: {
     flexDirection: "row",
     backgroundColor: "#fff",
-    padding: 14, // was 20
-    marginVertical: 6, // was 8
-    borderRadius: 16, // was 24
+    padding: 14,
+    marginVertical: 6,
+    borderRadius: 16,
     alignItems: "center",
-    elevation: 2, // was 4
+    elevation: 2,
     borderWidth: 1,
     borderColor: "#f1f5f9",
   },
-
   avatarContainer: {
     position: "relative",
-    marginRight: 12, // was 18
+    marginRight: 12,
   },
-
   avatar: {
-    width: 52, // was 64
-    height: 52, // was 64
-    borderRadius: 26, // was 32
+    width: 52,
+    height: 52,
+    borderRadius: 26,
   },
-
   avatarOverlay: {
     ...StyleSheet.absoluteFillObject,
     borderRadius: 32,
@@ -824,33 +989,28 @@ headerLeft: {
     flex: 1,
   },
   name: {
-    fontSize: 16, // was 18
+    fontSize: 16,
     fontWeight: "700",
     color: COLORS.textDark,
-    marginBottom: 4, // was 6
+    marginBottom: 4,
   },
-
   lastSeen: {
-    fontSize: 13, // was 14
+    fontSize: 13,
     color: "#64748b",
     fontWeight: "500",
   },
-
   chatArrow: {
     marginLeft: "auto",
   },
   chatArrowIcon: {
-    fontSize: 20, // was 24
+    fontSize: 20,
     color: COLORS.primary,
     fontWeight: "300",
   },
-
   pinIcon: {
-    fontSize: 16, // was 18
-    marginRight: 4, // was 6
+    fontSize: 16,
+    marginRight: 4,
   },
-
-  // empty
   emptyContainer: {
     flex: 1,
     justifyContent: "center",
@@ -888,8 +1048,6 @@ headerLeft: {
     lineHeight: 24,
     fontWeight: "500",
   },
-
-  /* Action modal */
   actionModalOverlay: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
@@ -932,31 +1090,29 @@ headerLeft: {
   },
   unreadText: {
     fontWeight: "700",
-    color: "#1e3a8a", // blue shade
+    color: "#1e3a8a",
   },
-
   unreadDot: {
-    fontSize: 18, // was 20
+    fontSize: 18,
     color: "#2563eb",
-    marginRight: 4, // was 6
+    marginRight: 4,
     marginTop: 2,
   },
-
   logoContainer: {
-    marginRight: 12,
-    backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 12,
-    padding: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    padding: 6,
+    overflow: 'hidden',
+    elevation: 2,
+    justifyContent: "center",
+    alignItems: "center",
+    width: 46,
+    height: 46,
   },
-
   logoImage: {
-    width: 40,
-    height: 40,
+    width: 32,
+    height: 32,
   },
-
-    /* Instagram-style rows */
   igRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -966,88 +1122,71 @@ headerLeft: {
     borderBottomWidth: 1,
     borderBottomColor: "#e5e7eb",
   },
-
-igAvatar: {
-  width: 44,
-  height: 44,
-  borderRadius: 22,
-  marginRight: 12,
-  backgroundColor: "#e5e7eb",
-},
-
-
+  igAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginRight: 12,
+    backgroundColor: "#e5e7eb",
+  },
   igContent: {
     flex: 1,
   },
-
-igTopRow: {
-  flexDirection: "row",
-  alignItems: "center",
-},
-
-
-
-igName: {
-  fontSize: 16,
-  fontWeight: "600",
-  color: "#111827",
-  flex: 1,
-},
-
-igTime: {
-  fontSize: 11,
-  color: "#9ca3af",
-  marginLeft: 8,
-},
-
-igMessage: {
-  fontSize: 13,
-  color: "#6b7280",
-  marginTop: 1,
-  letterSpacing: 0.2,
-},
-
-igUnread: {
-  fontWeight: "600",
-  color: "#111827",
-},
-
-igUnreadDot: {
-  width: 7,
-  height: 7,
-  borderRadius: 3.5,
-  backgroundColor: COLORS.primary,
-  marginLeft: 10,
-},
-
-
+  igTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  igName: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#111827",
+    flex: 1,
+  },
+  igTime: {
+    fontSize: 11,
+    color: "#9ca3af",
+    marginLeft: 8,
+  },
+  igMessage: {
+    fontSize: 13,
+    color: "#6b7280",
+    marginTop: 1,
+    letterSpacing: 0.2,
+  },
+  igUnread: {
+    fontWeight: "600",
+    color: "#111827",
+  },
+  igUnreadDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: COLORS.primary,
+    marginLeft: 10,
+  },
   igPin: {
     fontSize: 14,
     marginLeft: 8,
   },
-
 });
 
-/* Tabs styles */
 const tabsStyles = StyleSheet.create({
   tabRow: {
     flexDirection: "row",
-    paddingHorizontal: 16, // was 20
-    marginTop: 10, // was 14
-    gap: 10, // was 12
+    paddingHorizontal: 16,
+    marginTop: 10,
+    gap: 10,
   },
-
-tabButton: {
-  flex: 1,
-  paddingVertical: 10,
-  borderRadius: 20,
-  backgroundColor: "#f1f5f9",
-  flexDirection: "row",
-  justifyContent: "center",
-  alignItems: "center",
-  gap: 6,
-},
-
+  tabButton: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: "#f1f5f9",
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 6,
+  },
   tabActive: {
     backgroundColor: COLORS.primary,
     borderColor: COLORS.primary,
@@ -1062,52 +1201,54 @@ tabButton: {
   },
 });
 
-/* Search styles */
 const searchStyles = StyleSheet.create({
   searchRow: {
-    flexDirection: "row",
-    paddingHorizontal: 16, // was 20
-    marginTop: 10, // was 12
-    alignItems: "center",
+    paddingHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
   },
-
-searchInput: {
-  flex: 1,
-  height: 40,
-  backgroundColor: "#ffffff",
-  borderRadius: 20,
-  paddingHorizontal: 16,
-  borderWidth: 1,
-  borderColor: "#e5e7eb",
-  fontSize: 14,
-  color: "#111827",
-},
-
-
-refreshBtn: {
-  marginLeft: 8,
-  width: 40,
-  height: 40,
-  borderRadius: 20,
-  backgroundColor: "#ffffff",
-  justifyContent: "center",
-  alignItems: "center",
-  borderWidth: 1,
-  borderColor: "#e5e7eb",
-},
-
-refreshText: {
-  fontSize: 18,
-  color: COLORS.primary,
-  fontWeight: "600",
-},
-
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#f3f4f6",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 40,
+  },
+  searchIcon: {
+    fontSize: 16,
+    marginRight: 8,
+    opacity: 0.5,
+  },
+  searchInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: "transparent",
+    fontSize: 15,
+    color: "#111827",
+    paddingVertical: 0,
+  },
+  refreshBtn: {
+    marginLeft: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  refreshText: {
+    fontSize: 18,
+    color: COLORS.primary,
+    fontWeight: "600",
+  },
   contactTime: {
     fontSize: 12,
     color: "#64748b",
     marginTop: 4,
   },
 });
-
 
 export default HomeScreen;

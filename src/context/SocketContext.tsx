@@ -17,11 +17,11 @@ interface ISocketContext {
 const SocketContext = createContext<ISocketContext>({
   socket: null,
   userId: null,
-  emitTyping: () => {},
-  emitMessageRead: () => {},
-  emitReadAllMessages: () => {},
-  emitDeleteForEveryone: () => {},
-  emitReactToMessage: () => {},
+  emitTyping: () => { },
+  emitMessageRead: () => { },
+  emitReadAllMessages: () => { },
+  emitDeleteForEveryone: () => { },
+  emitReactToMessage: () => { },
 
 });
 
@@ -42,8 +42,7 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (!token || !uid) {
           console.log("❌ No token/userId found — skipping socket connect");
-          
-          // If no credentials, disconnect existing socket
+
           if (socketRef.current) {
             console.log("🔌 Disconnecting socket due to missing credentials");
             socketRef.current.disconnect();
@@ -57,12 +56,10 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (!mounted) return;
 
-        // CRITICAL: Check if userId has changed (account switch)
         if (previousUserIdRef.current && previousUserIdRef.current !== uid) {
           console.log("🔄 USER CHANGED! Old:", previousUserIdRef.current, "New:", uid);
           console.log("🔌 Disconnecting old socket connection...");
-          
-          // Disconnect old socket
+
           if (socketRef.current) {
             try {
               socketRef.current.disconnect();
@@ -72,9 +69,6 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
               console.log("Error disconnecting old socket:", e);
             }
           }
-          
-          // Small delay to ensure clean disconnect
-          // await new Promise(resolve => setTimeout(resolve, 100));
         }
 
         // Update userId
@@ -101,7 +95,6 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
 
         newSocket.on("connect", () => {
           console.log("🟢 SOCKET CONNECTED", newSocket?.id, "for user:", uid);
-          // Join the user's room
           newSocket.emit("join", { userId: uid });
         });
 
@@ -122,15 +115,12 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       }
     };
 
-    // Initial connection
     initSocket();
 
-    // Poll AsyncStorage periodically to detect account changes
-    // This catches cases where logout/login happens without unmounting the provider
     checkInterval = setInterval(async () => {
       try {
         const currentUid = await AsyncStorage.getItem("userId");
-        
+
         // If userId in storage differs from our state, reinitialize
         if (currentUid !== previousUserIdRef.current) {
           console.log("📱 Detected userId change via polling");
@@ -139,16 +129,16 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
       } catch (e) {
         console.log("Error checking userId:", e);
       }
-    }, 2000); // Check every 2 seconds
+    }, 2000);
 
     // CLEANUP FUNCTION
     return () => {
       mounted = false;
-      
+
       if (checkInterval) {
         clearInterval(checkInterval);
       }
-      
+
       if (socketRef.current) {
         try {
           console.log("🧹 Cleaning up socket connection");
@@ -158,28 +148,26 @@ export const SocketProvider = ({ children }: { children: React.ReactNode }) => {
           console.log("Error during socket cleanup:", e);
         }
       }
-      
+
       setSocket(null);
       setUserId(null);
     };
   }, []);
 
-const emitReactToMessage = (
-  messageId: string,
-  emoji: string,
-  toUserId: string
-) => {
-  if (!socket || !socket.connected) return;
+  const emitReactToMessage = (
+    messageId: string,
+    emoji: string,
+    toUserId: string
+  ) => {
+    if (!socket || !socket.connected) return;
 
-  socket.emit("reactMessage", {
-    messageId,
-    emoji,
-    to: toUserId,
-  });
-};
+    socket.emit("reactMessage", {
+      messageId,
+      emoji,
+      to: toUserId,
+    });
+  };
 
-
-  
   // typing helper
   const emitTyping = (toUserId: string, isTyping: boolean) => {
     if (!socket || !socket.connected) {
@@ -208,23 +196,23 @@ const emitReactToMessage = (
   };
 
   // delete message for everyone
-const emitDeleteForEveryone = (messageId: string, toUserId: string) => {
-  if (!socket || !socket.connected) {
-    console.log("⚠️ Cannot emit delete - socket not connected");
-    return;
-  }
+  const emitDeleteForEveryone = (messageId: string, toUserId: string) => {
+    if (!socket || !socket.connected) {
+      console.log("⚠️ Cannot emit delete - socket not connected");
+      return;
+    }
 
-  socket.emit("deleteMessageForEveryone", {
-  messageId,
-  deleteType: "forEveryone",
-  to: toUserId,
-});
-};
+    socket.emit("deleteMessageForEveryone", {
+      messageId,
+      deleteType: "forEveryone",
+      to: toUserId,
+    });
+  };
 
-    return (
-    <SocketContext.Provider value={{ 
-      socket, 
-      userId, 
+  return (
+    <SocketContext.Provider value={{
+      socket,
+      userId,
       emitTyping,
       emitMessageRead,
       emitReadAllMessages,

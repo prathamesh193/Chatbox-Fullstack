@@ -19,6 +19,8 @@ import { COLORS } from "../constants/colors";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/AppNavigator";
 import SystemNavigationBar from "react-native-system-navigation-bar";
+import { pushService } from '../services/pushNotificationService';
+
 
 type LoginScreenProp = NativeStackNavigationProp<RootStackParamList, "Login">;
 
@@ -29,12 +31,12 @@ const LoginScreen = () => {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-  if (Platform.OS === 'android') {
-    SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
-    SystemNavigationBar.setNavigationBarContrastEnforced(true);
-  }
+    if (Platform.OS === 'android') {
+      SystemNavigationBar.setNavigationColor('#FFFFFF', 'dark');
+      SystemNavigationBar.setNavigationBarContrastEnforced(true);
+    }
   }, []);
-  
+
   const handleLogin = async () => {
     if (!email || !password) {
       Alert.alert("Missing Fields", "Please enter both email and password.");
@@ -44,38 +46,29 @@ const LoginScreen = () => {
     try {
       setLoading(true);
 
-      // 🔥 VERY IMPORTANT: Prevents wrong message alignment
       await AsyncStorage.multiRemove(["token", "userId"]);
 
       const res = await api.post("/api/auth/login", { email, password });
       const data = res.data;
 
-      // ------------------------------
       // STORE TOKEN
-      // ------------------------------
       if (data.token) {
         await AsyncStorage.setItem("token", data.token);
         console.log("🔒 Token stored");
-      } else {
-        console.warn("⚠ No token found in login response");
       }
 
-      // ------------------------------
-      // STORE USER ID (required by Chat & Socket)
-      // ------------------------------
-      if (data._id) {
-        await AsyncStorage.setItem("userId", data._id);
-        console.log("🆔 UserId stored:", data._id);
-      } else if (data.user?._id) {
-        await AsyncStorage.setItem("userId", data.user._id);
-        console.log("🆔 UserId stored:", data.user._id);
-      } else {
-        console.warn("⚠ No userId found in login response");
+      const uid = data._id || data.user?._id;
+      if (uid) {
+        await AsyncStorage.setItem("userId", uid);
+        console.log("🆔 UserId stored:", uid);
       }
+
+      await new Promise(res => setTimeout(res, 400));
 
       Alert.alert("Welcome!", `Hello ${data.fullName || data.user?.fullName || ""}`);
 
-      navigation.navigate("Home");
+      navigation.replace("Home");
+
 
     } catch (error: any) {
       console.error("❌ Login error:", error.response?.data || error.message);
@@ -86,12 +79,12 @@ const LoginScreen = () => {
   };
 
   return (
-    <KeyboardAvoidingView 
+    <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <StatusBar backgroundColor={COLORS.primary} barStyle="light-content" />
-      
+
       {/* Header Section */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
@@ -100,7 +93,7 @@ const LoginScreen = () => {
         </View>
       </View>
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -158,7 +151,7 @@ const LoginScreen = () => {
             </View>
 
             {/* Sign Up Link */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.signupButton}
               onPress={() => navigation.navigate("Signup")}
               activeOpacity={0.7}
@@ -173,11 +166,11 @@ const LoginScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: COLORS.background 
+  container: {
+    flex: 1,
+    backgroundColor: COLORS.background
   },
-  
+
   header: {
     backgroundColor: COLORS.primary,
     paddingTop: 80,
@@ -196,8 +189,8 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
 
-  headerTitle: { 
-    color: "#fff", 
+  headerTitle: {
+    color: "#fff",
     fontSize: 36,
     fontWeight: "800",
     fontFamily: "System",

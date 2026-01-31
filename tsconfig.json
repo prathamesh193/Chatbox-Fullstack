@@ -6,7 +6,7 @@
   "include": [
     "**/*.ts",
     "**/*.tsx"
-    // Add any other files/folders you need to include
+, "src/context/EncryptionContext.js"  
   ],
   "exclude": [
     "node_modules",
