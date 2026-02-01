@@ -92,6 +92,7 @@ const ContactsScreen = () => {
                     navigation.navigate("Chat", {
                         userId: item._id,
                         name: item.fullName,
+                        profilePic: item.profilePic,
                     })
                 }
             >

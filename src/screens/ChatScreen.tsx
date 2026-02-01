@@ -100,8 +100,7 @@ if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental
 const ChatScreen: React.FC = () => {
   const route = useRoute<any>();
   const navigation = useNavigation<any>();
-  const { userId: chatPartnerId, name } = route.params || {};
-
+  const { userId: chatPartnerId, name, profilePic } = route.params || {};
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
@@ -135,6 +134,7 @@ const ChatScreen: React.FC = () => {
 
   const [partnerTyping, setPartnerTyping] = useState(false);
   const [partnerOnline, setPartnerOnline] = useState(false);
+  const [partnerProfilePic, setPartnerProfilePic] = useState(profilePic || null);
   const [sending, setSending] = useState(false);
   const [showBlockModal, setShowBlockModal] = useState(false);
 
@@ -191,6 +191,7 @@ const ChatScreen: React.FC = () => {
       socket.off("onlineStatus", onOnlineStatus);
     };
   }, [socket, chatPartnerId]);
+
 
   // Mark messages as read when opening chat
   useEffect(() => {
@@ -472,6 +473,27 @@ const ChatScreen: React.FC = () => {
       mounted = false;
     };
   }, [chatPartnerId, userId]);
+
+    useEffect(() => {
+    const fetchPartnerProfile = async () => {
+      if (!chatPartnerId) return;
+      
+      try {
+        const response = await api.get(`/api/users/${chatPartnerId}`);
+        
+        if (response.data && response.data.profilePic) {
+          const pic = response.data.profilePic.replace('http://localhost:3000', 'http://139.59.87.161:3000');
+          setPartnerProfilePic(pic);
+        }
+      } catch (error) {
+        console.warn("Failed to fetch partner profile pic:", error);
+      }
+    };
+
+    if (!partnerProfilePic && chatPartnerId) {
+      fetchPartnerProfile();
+    }
+  }, [chatPartnerId, partnerProfilePic]);
 
   useEffect(() => {
     if (!socket) {
@@ -1769,7 +1791,35 @@ const ChatScreen: React.FC = () => {
                 <Text style={styles.backButtonText}>←</Text>
               </TouchableOpacity>
 
-              <View style={{ flex: 1, marginHorizontal: 12 }}>
+              {/* Profile Picture - FIXED */}
+              <TouchableOpacity
+                onPress={() => navigation.navigate("ContactInfo", {
+                  userId: chatPartnerId,
+                  name: name,
+                  profilePic: partnerProfilePic
+                })}
+                style={styles.headerProfilePic}
+              >
+                <Image
+                  source={{
+                    uri: partnerProfilePic
+                      ? partnerProfilePic.replace('http://localhost:3000', 'http://139.59.87.161:3000')
+                      : 'https://cdn-icons-png.flaticon.com/512/149/149071.png'
+                  }}
+                  style={styles.headerProfileImage}
+                />
+              </TouchableOpacity>
+
+              {/* Center: Name + Online/Typing - Now Clickable */}
+              <TouchableOpacity
+                style={{ flex: 1, marginHorizontal: 8 }}
+                activeOpacity={0.7}
+                onPress={() => navigation.navigate("ContactInfo", {
+                  userId: chatPartnerId,
+                  name: name,
+                  profilePic: partnerProfilePic
+                })}
+              >
                 <Text style={styles.headerName}>{name}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <View style={{
@@ -1784,7 +1834,7 @@ const ChatScreen: React.FC = () => {
                     {partnerTyping ? "typing..." : partnerOnline ? "Online" : "Offline"}
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
 
               <View style={{ flexDirection: "row", alignItems: "center" }}>
                 {/* Search Emoji */}
@@ -1803,7 +1853,6 @@ const ChatScreen: React.FC = () => {
                   >
                     ⌕
                   </Text>
-
                 </TouchableOpacity>
 
                 {/* 3-dot menu */}
@@ -1811,7 +1860,6 @@ const ChatScreen: React.FC = () => {
                   <Text style={styles.searchIcon}>⋮</Text>
                 </TouchableOpacity>
               </View>
-
             </View>
 
             {pinnedMessage && (
@@ -2396,8 +2444,29 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 8,
   },
-  backButton: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
+  backButton: {
+    padding: 6,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    borderRadius: 18,
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12
+  },
   backButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  headerProfilePic: {
+    marginLeft: 0,
+    marginRight: 12,  
+  },
+  headerProfileImage: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#e5e7eb",
+    borderWidth: 2,
+    borderColor: "rgba(255, 255, 255, 0.3)",
+  },
   headerName: { color: "#fff", fontSize: 16, fontWeight: "700", textAlign: "left" },
   chatStatusSmall: { color: "rgba(255,255,255,0.9)", fontSize: 11, marginTop: 2 },
   searchIconBtn: { marginRight: 4, padding: 6, borderRadius: 18 },

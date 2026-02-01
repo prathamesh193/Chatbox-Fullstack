@@ -305,6 +305,7 @@ const HomeScreen = () => {
           navigation.navigate("Chat", {
             userId: item._id,
             name: item.fullName,
+            profilePic: item.profilePic,
           })
         }
         onLongPress={() => openActionMenu(item)}

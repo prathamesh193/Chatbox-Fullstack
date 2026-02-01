@@ -8,6 +8,7 @@ import ContactsScreen from '../screens/ContactsScreen';
 import AboutUsScreen from '../screens/Aboutusscreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import ChatScreen from '../screens/ChatScreen';
+import ContactInfoScreen from '../screens/ContactInfoScreen';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -16,7 +17,8 @@ export type RootStackParamList = {
   Contacts: undefined;
   Profile: undefined;
   AboutUs: undefined;
-  Chat: { userId: string; name: string };
+  Chat: { userId: string; name: string; profilePic?: string };
+  ContactInfo: { userId: string; name: string; profilePic?: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -35,6 +37,11 @@ const AppNavigator = () => {
       <Stack.Screen name="Contacts" component={ContactsScreen} />
       <Stack.Screen name="AboutUs" component={AboutUsScreen} />
       <Stack.Screen name="Profile" component={ProfileScreen} />
+      <Stack.Screen 
+        name="ContactInfo" 
+        component={ContactInfoScreen} 
+        options={{ headerShown: false }}
+      />
       <Stack.Screen
         name="Chat"
         component={ChatScreen}
