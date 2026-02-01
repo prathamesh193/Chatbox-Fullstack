@@ -69,10 +69,35 @@ const AboutUsScreen = () => {
         contentContainerStyle={styles.contentWrapper}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.textContainer}>
-          <Text style={styles.contentText}>
+        <View style={styles.card}>
+          <View style={styles.iconContainer}>
+            <Text style={styles.iconText}>💬</Text>
+          </View>
+
+          <Text style={styles.welcomeText}>
             Welcome to Brahman Connect
           </Text>
+
+          <View style={styles.divider} />
+
+          <Text style={styles.descriptionText}>
+            The <Text style={styles.boldText}>Brahmin Connect Chat</Text> feature enables seamless, real-time communication within the app. Designed for smooth and secure conversations, it allows users to connect instantly with service providers and community members without leaving the platform.
+          </Text>
+
+          <View style={styles.featureContainer}>
+            <View style={styles.featureItem}>
+              <View style={styles.featureDot} />
+              <Text style={styles.featureText}>Real-time messaging</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureDot} />
+              <Text style={styles.featureText}>Secure conversations</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureDot} />
+              <Text style={styles.featureText}>Instant connectivity</Text>
+            </View>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -82,7 +107,7 @@ const AboutUsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F9FAFB",
   },
 
   headerWrapper: {
@@ -147,21 +172,80 @@ const styles = StyleSheet.create({
 
   contentContainer: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#F9FAFB",
   },
   contentWrapper: {
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingVertical: 24,
   },
-  textContainer: {
-    flex: 1,
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
-  contentText: {
+  iconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: `${COLORS.primary}15`,
+    justifyContent: "center",
+    alignItems: "center",
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  iconText: {
+    fontSize: 32,
+  },
+  welcomeText: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: "#111827",
+    textAlign: "center",
+    marginBottom: 16,
+    letterSpacing: 0.3,
+  },
+  divider: {
+    height: 2,
+    backgroundColor: "#E5E7EB",
+    marginBottom: 20,
+    width: "100%",
+  },
+  descriptionText: {
     fontSize: 16,
-    color: "#374151",
+    color: "#4B5563",
     lineHeight: 26,
     textAlign: "left",
+    marginBottom: 24,
+  },
+  boldText: {
+    fontWeight: "700",
+    color: COLORS.primary,
+  },
+  featureContainer: {
+    marginTop: 8,
+  },
+  featureItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  featureDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.primary,
+    marginRight: 12,
+  },
+  featureText: {
+    fontSize: 15,
+    color: "#374151",
+    fontWeight: "500",
   },
 });
 

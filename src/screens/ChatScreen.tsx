@@ -233,6 +233,8 @@ const ChatScreen: React.FC = () => {
       if (response.status === 200) {
         setIsBlocked(true);
         setShowBlockModal(false);
+        // DON'T clear messages - keep them visible in the UI
+        // The messages array already has the chat history loaded
         Alert.alert("Blocked", "You blocked this contact");
       } else throw new Error("Block failed");
     } catch (error: any) {
@@ -252,12 +254,21 @@ const ChatScreen: React.FC = () => {
       if (response.status === 200) {
         setIsBlocked(false);
         setIsBlockedByThem(false);
-        Alert.alert("Unblocked", "You unblocked this contact");
+
+        // Reload fresh messages from backend after unblocking
+        try {
+          const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
+          const msgs = (messagesRes.data || []).map(normalizeDeleted);
+          setMessages(msgs);
+          Alert.alert("Unblocked", "You unblocked this contact");
+        } catch (err) {
+          console.warn("Failed to reload messages after unblock:", err);
+          Alert.alert("Unblocked", "You unblocked this contact");
+        }
       } else throw new Error("Unblock failed");
     } catch (error: any) {
       console.error("Unblock error:", error);
       if (error.response?.status === 404) Alert.alert("Error", "User not found");
-      else if (error.response?.status === 404) Alert.alert("Error", "User not found");
       else Alert.alert("Error", "Failed to unblock user");
     } finally {
       setBlockLoading(false);
@@ -387,12 +398,25 @@ const ChatScreen: React.FC = () => {
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      // First, check our block status
+      let isBlockedLocal = false;
+      try {
+        const blockedRes = await api.get(`/api/users/blocked`);
+        const blockedUsers = blockedRes.data || [];
+        isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
+        setIsBlocked(isBlockedLocal);
+      } catch (blockError) {
+        console.warn("Block check error:", blockError);
+        setIsBlocked(false);
+      }
+
+      // Try to load messages (will fail with 403 if blocked, but handle gracefully)
       try {
         const messagesRes = await api.get(`/api/messages/${chatPartnerId}`);
-
         const msgs = (messagesRes.data || []).map(normalizeDeleted);
         setMessages(msgs);
 
+        // Load pinned message
         try {
           const pinnedId = await AsyncStorage.getItem(PIN_STORAGE_KEY(chatPartnerId));
           if (pinnedId) {
@@ -409,27 +433,29 @@ const ChatScreen: React.FC = () => {
           setPinnedMessage(null);
         }
 
-        try {
-          const blockedRes = await api.get(`/api/users/blocked`);
-          const blockedUsers = blockedRes.data || [];
-          const isBlockedLocal = blockedUsers.some((user: any) => user._id === chatPartnerId);
-          setIsBlocked(isBlockedLocal);
-
-          setIsBlockedByThem(false);
-        } catch (blockError) {
-          setIsBlocked(false);
-          setIsBlockedByThem(false);
-        }
+        setIsBlockedByThem(false);
       } catch (err: any) {
-        console.warn("load messages error", err);
         if (mounted) {
           if (err.response?.status === 403) {
-            setIsBlockedByThem(true);
-            setMessages([]); 
+            // 403 means blocked - but don't show error, just keep current messages
+            // If messages array is already empty, keep it empty
+            // If messages exist from before, they stay visible
+            const errorMsg = err.response?.data?.message || '';
+            if (errorMsg.includes('blocked')) {
+              // Check if we blocked them or they blocked us
+              if (isBlockedLocal) {
+                // We blocked them - keep any existing messages visible
+                // Don't clear messages array
+              } else {
+                // They blocked us - clear messages
+                setIsBlockedByThem(true);
+                setMessages([]);
+              }
+            }
           } else if (err.response?.status === 404) {
-            Alert.alert("Error", "Chat not found");
+            console.warn("Chat not found");
           } else {
-            Alert.alert("Error", "Cannot load messages");
+            console.warn("Cannot load messages:", err.message);
           }
         }
       } finally {
@@ -552,7 +578,7 @@ const ChatScreen: React.FC = () => {
     };
   }, [socket]);
 
-  
+
   // Helper functions
   const scrollToBottom = () => {
     setTimeout(() => {
@@ -630,10 +656,10 @@ const ChatScreen: React.FC = () => {
 
     launchImageLibrary(
       {
-        mediaType: "mixed",  
+        mediaType: "mixed",
         selectionLimit: MAX_IMAGES,
         includeBase64: false,
-        videoQuality: 'high', 
+        videoQuality: 'high',
       },
       (res: any) => {
         if (!res || res.didCancel) return;
@@ -1047,7 +1073,7 @@ const ChatScreen: React.FC = () => {
 
         console.log("✅ [SEND] API Response received:", res.data);
 
-        const responseData = res.data.data || res.data; 
+        const responseData = res.data.data || res.data;
 
         console.log("🔍 [SEND] Response details:", {
           _id: responseData._id,
@@ -1305,7 +1331,7 @@ const ChatScreen: React.FC = () => {
     setCurrentMatchIdx(nextIdx);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     flatListRef.current?.scrollToIndex({
-      index: nextIdx,  
+      index: nextIdx,
       animated: true,
       viewPosition: 0.5
     });
@@ -1317,7 +1343,7 @@ const ChatScreen: React.FC = () => {
     setCurrentMatchIdx(nextIdx);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     flatListRef.current?.scrollToIndex({
-      index: nextIdx,  
+      index: nextIdx,
       animated: true,
       viewPosition: 0.5
     });
@@ -1710,8 +1736,8 @@ const ChatScreen: React.FC = () => {
         style: "destructive",
         onPress: async () => {
           try {
-            await clearChatApi(chatPartnerId); 
-            setMessages([]);                   
+            await clearChatApi(chatPartnerId);
+            setMessages([]);
             setFilteredMessages(null);
 
             await AsyncStorage.removeItem(PIN_STORAGE_KEY(chatPartnerId));
@@ -1724,13 +1750,6 @@ const ChatScreen: React.FC = () => {
         },
       },
     ]);
-  };
-
-
-
-  const handleReportUser = () => {
-    setMenuVisible(false);
-    Alert.alert("Report user", "Report functionality will be implemented later.");
   };
 
   return (
@@ -1870,10 +1889,6 @@ const ChatScreen: React.FC = () => {
                       <Text style={menuStyles.menuText}>Block {name}</Text>
                     </TouchableOpacity>
                   )}
-
-                  <TouchableOpacity style={menuStyles.menuItem} onPress={handleReportUser}>
-                    <Text style={menuStyles.menuText}>Report {name}</Text>
-                  </TouchableOpacity>
                 </View>
               </TouchableOpacity>
             </Modal>
@@ -2368,8 +2383,8 @@ const styles = StyleSheet.create({
   header: {
     backgroundColor: COLORS.primary,
     paddingTop: Platform.OS === "ios" ? 50 : StatusBar.currentHeight || 35,
-    paddingBottom: 15, 
-    paddingHorizontal: 16, 
+    paddingBottom: 15,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -2377,9 +2392,9 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.15, 
-    shadowRadius: 10, 
-    elevation: 8, 
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
   },
   backButton: { padding: 6, backgroundColor: "rgba(255,255,255,0.2)", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
   backButtonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
@@ -2390,7 +2405,7 @@ const styles = StyleSheet.create({
   searchHighlight: { backgroundColor: "#fff59b", color: "#111827", fontWeight: "700" },
   messagesContainer: {
     padding: 12,
-    paddingBottom: 20, 
+    paddingBottom: 20,
     flexGrow: 1
   },
   messageWrapper: { marginVertical: 4 },
@@ -2401,13 +2416,13 @@ const styles = StyleSheet.create({
   theirBubble: { backgroundColor: "#fff", borderBottomLeftRadius: 4, borderWidth: 1, borderColor: "#e5e7eb" },
   myMessageText: {
     color: "#fff",
-    fontSize: 15, 
-    lineHeight: 20, 
+    fontSize: 15,
+    lineHeight: 20,
     paddingBottom: 2,
   },
   theirMessageText: {
     color: "#1f2937",
-    fontSize: 15, 
+    fontSize: 15,
     lineHeight: 20,
     paddingBottom: 2,
   },
@@ -2454,17 +2469,17 @@ const styles = StyleSheet.create({
   },
   inputContainer: {
     flexDirection: "row",
-    paddingHorizontal: 16, 
+    paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 14, 
+    paddingBottom: 14,
     borderTopWidth: 1,
     borderColor: "#e5e7eb",
     alignItems: "flex-end",
     backgroundColor: "#fff",
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: -2 }, 
-    shadowOpacity: 0.1, 
-    shadowRadius: 8, 
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
     elevation: 5,
   },
   mediaButton: { padding: 6, marginRight: 6, backgroundColor: "#f3f4f6", borderRadius: 18, width: 36, height: 36, justifyContent: "center", alignItems: "center" },
@@ -2473,7 +2488,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#f9fafb",
     borderRadius: 22,
-    paddingHorizontal: 16, 
+    paddingHorizontal: 16,
     paddingVertical: 12,
     marginHorizontal: 6,
     fontSize: 16,

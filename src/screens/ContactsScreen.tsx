@@ -97,9 +97,7 @@ const ContactsScreen = () => {
             >
                 <Image
                     source={{
-                        uri:
-                            item.profilePic ||
-                            "https://cdn-icons-png.flaticon.com/512/149/149071.png",
+                        uri: item.profilePic ? item.profilePic.replace('http://localhost:3000', 'http://139.59.87.161:3000') : 'https://cdn-icons-png.flaticon.com/512/149/149071.png'
                     }}
                     style={styles.contactAvatar}
                 />
